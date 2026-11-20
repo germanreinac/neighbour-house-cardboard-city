@@ -1,0 +1,147 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Cardboard City</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=Permanent+Marker&display=swap">
+<style>
+  /* Layout: full-bleed 3D view; HUD is marker-on-cardboard labels pinned to the corners. */
+  :root {
+    --kraft: #c9a26b; --kraft-deep: #a37c48; --ink: #2a2018; --paper: #fff6e3;
+    --water: #3aa0ff; --soak: #5a6fd6; --tape: #f2e3b8; --alarm: #e2553f; --sky: #dcc096;
+    --display: "Permanent Marker", "Marker Felt", "Comic Sans MS", cursive;
+    --body: "Patrick Hand", "Comic Sans MS", "Trebuchet MS", sans-serif;
+    color-scheme: light;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--sky); color: var(--ink); font-family: var(--body); font-size: 18px; overflow: hidden; overscroll-behavior: none; }
+  #game { position: relative; height: 100%; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
+  #view { display: block; width: 100%; height: 100%; outline: none; }
+  #ui { position: absolute; inset: 0; pointer-events: none; padding-block: 12px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  #ui > * { position: absolute; }
+  .label { background: var(--kraft); border: 2px solid var(--ink); border-radius: 3px; box-shadow: 2px 3px 0 rgba(42, 32, 24, .35); padding: 6px 10px; }
+
+  #cross { left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: var(--paper); border: 1.5px solid var(--ink); }
+  #stats { left: max(16px, env(safe-area-inset-left, 0px)); bottom: 14px; width: min(230px, 46vw); display: grid; gap: 6px; transform: rotate(-1.2deg); }
+  .bar { height: 14px; border: 2px solid var(--ink); background: var(--paper); border-radius: 2px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 50%; background: var(--water); }
+  #wetbar i { background: var(--soak); }
+  .row { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; letter-spacing: .04em; text-transform: uppercase; }
+  #pack { right: max(16px, env(safe-area-inset-right, 0px)); top: 12px; display: flex; gap: 12px; align-items: center; transform: rotate(1deg); font-variant-numeric: tabular-nums; }
+  #pack b { font-family: var(--display); font-weight: 400; font-size: 20px; }
+  #flags { display: flex; gap: 4px; }
+  #flags i { width: 14px; height: 18px; border: 2px solid var(--ink); background: transparent; opacity: .45; }
+  #flags i.carried { opacity: 1; background: var(--c); animation: wave .5s infinite alternate; }
+  #flags i.captured { opacity: 1; background: var(--c); }
+  @keyframes wave { to { transform: translateY(-3px) rotate(-8deg); } }
+  #compass { left: max(16px, env(safe-area-inset-left, 0px)); top: 12px; display: flex; gap: 8px; align-items: center; font-size: 16px; }
+  #needle { width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 18px solid var(--alarm); }
+  #prompt { left: 50%; top: 60%; transform: translateX(-50%); pointer-events: auto; cursor: pointer; font: inherit; font-size: 20px; color: var(--ink); background: var(--tape); white-space: nowrap; }
+  #prompt:focus-visible, button:focus-visible { outline: 3px solid var(--water); outline-offset: 2px; }
+  #sub { left: 50%; bottom: 96px; transform: translateX(-50%); width: min(560px, calc(100% - 32px)); background: var(--paper); font-size: 21px; line-height: 1.25; text-wrap: balance; }
+  #sub b { font-family: var(--display); font-weight: 400; color: var(--kraft-deep); margin-right: 6px; }
+  #toasts { left: 50%; top: 56px; transform: translateX(-50%); display: grid; gap: 6px; justify-items: center; width: min(520px, calc(100% - 32px)); }
+  .toast { background: var(--ink); color: var(--paper); padding: 4px 12px; border-radius: 3px; font-size: 18px; text-align: center; animation: pop 3.2s forwards; }
+  @keyframes pop { 0% { opacity: 0; transform: translateY(-6px); } 8%, 80% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+  #wetflash { inset: 0; box-shadow: inset 0 0 90px 30px var(--water); opacity: 0; }
+  #fade { inset: 0; background: #1c140d; opacity: 0; transition: opacity .5s; }
+  #card { inset: 0; display: grid; place-content: center; text-align: center; color: var(--paper); text-shadow: 3px 4px 0 var(--ink); opacity: 0; transition: opacity .8s; padding: 16px; }
+  #card h2 { font-family: var(--display); font-weight: 400; font-size: clamp(40px, 9vw, 96px); margin: 0; line-height: 1; transform: rotate(-3deg); }
+  #card p { font-size: 22px; margin: 10px 0 0; }
+
+  #menu, #market { inset: 0; pointer-events: auto; display: flex; align-items: flex-end; padding: 20px max(16px, env(safe-area-inset-right, 0px)) 24px max(16px, env(safe-area-inset-left, 0px)); background: linear-gradient(90deg, rgba(42, 32, 24, .55), rgba(42, 32, 24, 0) 75%); }
+  #market { align-items: center; justify-content: center; background: rgba(42, 32, 24, .5); }
+  .panel { background: var(--kraft); border: 3px solid var(--ink); box-shadow: 5px 7px 0 rgba(42, 32, 24, .45); padding: 18px 20px; max-width: 470px; width: 100%; max-height: 100%; overflow-y: auto; min-width: 0;
+    background-image: repeating-linear-gradient(90deg, rgba(42, 32, 24, .05) 0 2px, transparent 2px 9px); }
+  .panel h1 { font-family: var(--display); font-weight: 400; font-size: clamp(38px, 10vw, 60px); line-height: .95; margin: 0 0 10px; transform: rotate(-2deg); text-wrap: balance; }
+  .panel h2 { font-family: var(--display); font-weight: 400; font-size: 30px; margin: 0 0 4px; }
+  .panel p { margin: 0 0 12px; line-height: 1.3; max-width: 44ch; }
+  .tape { display: inline-block; background: var(--tape); padding: 0 8px; font-size: 14px; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 8px; transform: rotate(-1deg); }
+  .btns { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+  button.big { font-family: var(--display); font-size: 20px; color: var(--paper); background: var(--ink); border: 0; padding: 10px 16px; cursor: pointer; border-radius: 3px; }
+  button.big.alt { background: transparent; color: var(--ink); border: 2px solid var(--ink); font-family: var(--body); }
+  button.big:hover { background: var(--alarm); color: var(--paper); }
+  .keys { font-size: 16px; display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; }
+  .keys dt { font-family: var(--display); font-size: 14px; }
+  .keys dd { margin: 0; }
+  #shop { display: grid; gap: 8px; margin: 10px 0 14px; }
+  #shop button { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; text-align: left; font: inherit; color: var(--ink); background: var(--paper); border: 2px solid var(--ink); padding: 7px 10px; cursor: pointer; border-radius: 3px; }
+  #shop button small { grid-column: 1; font-size: 15px; opacity: .75; }
+  #shop button b { grid-row: 1 / span 2; grid-column: 2; align-self: center; font-family: var(--display); font-weight: 400; }
+  #shop button:disabled { opacity: .45; cursor: default; }
+  #shop button:not(:disabled):hover { background: var(--tape); }
+
+  #touch { inset: 0; }
+  #touch button { position: absolute; pointer-events: auto; width: 64px; height: 64px; border-radius: 50%; border: 2px solid var(--ink); background: rgba(255, 246, 227, .6); font: 15px var(--body); color: var(--ink); touch-action: none; }
+  #b-fire { right: max(22px, env(safe-area-inset-right, 0px)); bottom: 84px; width: 84px !important; height: 84px !important; background: rgba(58, 160, 255, .65) !important; }
+  #b-jump { right: max(118px, env(safe-area-inset-right, 0px)); bottom: 62px; }
+  #b-block { right: max(26px, env(safe-area-inset-right, 0px)); bottom: 182px; }
+  #b-balloon { right: max(102px, env(safe-area-inset-right, 0px)); bottom: 150px; }
+  #stick { width: 96px; height: 96px; border-radius: 50%; border: 2px dashed rgba(42, 32, 24, .6); margin: -48px; }
+  @media (prefers-reduced-motion: reduce) { .toast, #flags i.carried { animation-duration: 0.01s; } #fade, #card { transition: none; } }
+</style>
+
+<div id="game">
+  <canvas id="view" tabindex="0" aria-label="Cardboard City game view"></canvas>
+  <div id="ui">
+    <div id="wetflash"></div>
+    <div id="cross" hidden></div>
+    <div id="compass" class="label" hidden><div id="needle"></div><span id="goal">Treehouse</span></div>
+    <div id="pack" class="label" hidden>
+      <span id="flags" title="Tribe flags"><i></i><i></i><i></i></span>
+      <span>caps <b id="caps">0</b></span><span>boxes <b id="boxes">0</b></span><span>balloons <b id="balloons">0</b></span>
+    </div>
+    <div id="stats" class="label" hidden>
+      <div class="row"><span>Water</span><span id="watern">0</span></div>
+      <div class="bar" id="waterbar"><i></i></div>
+      <div class="row"><span>How soaked you are</span></div>
+      <div class="bar" id="wetbar"><i></i></div>
+    </div>
+    <div id="toasts" aria-live="polite"></div>
+    <div id="sub" class="label" hidden></div>
+    <button id="prompt" class="label" hidden></button>
+    <div id="touch" hidden>
+      <div id="stick" hidden></div>
+      <button id="b-fire">squirt</button><button id="b-jump">jump</button><button id="b-block">box</button><button id="b-balloon">balloon</button>
+    </div>
+    <div id="card"><div><h2 id="card-h">Cardboard City</h2><p id="card-p"></p></div></div>
+    <div id="fade"></div>
+
+    <div id="market" hidden>
+      <div class="panel">
+        <span class="tape">Treehouse market</span>
+        <h2>Caps for stuff</h2>
+        <p>You have <b id="mcaps">0</b> bottle caps. Nobody squirts anybody up here. That's the rule.</p>
+        <div id="shop"></div>
+        <button class="big" id="market-close">Back to it</button>
+      </div>
+    </div>
+
+    <div id="menu">
+      <div class="panel">
+        <span class="tape">Milo's house, after school</span>
+        <h1>Cardboard City</h1>
+        <p>Milo's dad is never home. His big brother says he's in the backyard. Behind the back door there is a pile of boxes, and inside the pile there is a whole city.</p>
+        <p>Water melts cardboard. Squirt a wall and it becomes a door.</p>
+        <div class="btns">
+          <button class="big" id="start-intro">Knock on the door</button>
+          <button class="big alt" id="start-skip">Skip to the city</button>
+        </div>
+        <dl class="keys" id="keys-desktop">
+          <dt>WASD</dt><dd>walk (you hop up boxes on your own)</dd>
+          <dt>Mouse</dt><dd>look, hold click to squirt</dd>
+          <dt>Right click / Q</dt><dd>put down a box</dd>
+          <dt>G</dt><dd>throw a water balloon</dd>
+          <dt>E</dt><dd>talk, open, trade</dd>
+        </dl>
+        <dl class="keys" id="keys-touch" hidden>
+          <dt>Left thumb</dt><dd>walk</dd>
+          <dt>Right thumb</dt><dd>look. Hold squirt and drag to aim.</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+<script type="module" src="src/main.js"></script>
