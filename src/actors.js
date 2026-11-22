@@ -6,18 +6,23 @@ export const GRAV = 22, JUMP = 7.4, WATER_GRAV = 14;
 // Axis-separated AABB movement against the voxel grid. e: {pos, vel, r, h, onGround, blocked}
 export function moveActor(world, e, dt) {
   const p = e.pos, r = e.r;
-  const hit = (x, y, z) => !world.boxFree(x - r, y + 0.001, z - r, x + r, y + e.h, z + r);
+  const lift = e.onRamp ? 0.4 : 0.001; // on a slope your feet clear the lip of the next box
+  const hit = (x, y, z, up = 0.001) => !world.boxFree(x - r, y + up, z - r, x + r, y + e.h, z + r);
   e.vel.y -= GRAV * dt;
   e.blocked = false;
   const nx = p.x + e.vel.x * dt;
-  if (hit(nx, p.y, p.z)) e.blocked = true; else p.x = nx;
+  if (hit(nx, p.y, p.z, lift)) e.blocked = true; else p.x = nx;
   const nz = p.z + e.vel.z * dt;
-  if (hit(p.x, p.y, nz)) e.blocked = true; else p.z = nz;
+  if (hit(p.x, p.y, nz, lift)) e.blocked = true; else p.z = nz;
   const ny = p.y + e.vel.y * dt;
   if (hit(p.x, ny, p.z)) {
     if (e.vel.y < 0) { p.y = Math.max(0, Math.floor(ny) + 1); e.onGround = true; }
     e.vel.y = 0;
   } else { p.y = ny; e.onGround = false; }
+  // slopes: stand on them, and stay stuck to them on the way down
+  const f = world.floorAt(p.x, p.y, p.z, r);
+  if (f !== null && (p.y <= f + 0.02 || (e.onRamp && e.vel.y <= 0 && p.y - f < 0.45))) { p.y = f; e.vel.y = 0; e.onGround = true; e.onRamp = true; }
+  else if (f === null || p.y > f + 0.5) e.onRamp = false;
   // hop up one-box steps on its own
   if (e.blocked && e.onGround) {
     const sp = Math.hypot(e.vel.x, e.vel.z);
@@ -200,8 +205,8 @@ const gArr = new Float32Array(N * N), came = new Int32Array(N * N), seen = new U
 let run = 0;
 function cellCost(world, x, z) {
   if (x < 2 || z < 2 || x > N - 3 || z > N - 3) return 0;
-  const a = world.get(x, 0, z), b = world.get(x, 1, z);
-  if (!a && !b) return 1;
+  const a = world.get(x, 0, z), b = world.get(x, 1, z), soft = t => t === 0 || t >= 12; // open, a slope, or a door to push
+  if (soft(a) && soft(b)) return a || b ? 2 : 1;
   return (a === 0 || a === 1) && (b === 0 || b === 1) ? 7 : 0;
 }
 export function findPath(world, sx, sz, gx, gz) {
@@ -340,7 +345,8 @@ export class Kid extends Actor {
       const dx = t.pos.x - p.x, dz = t.pos.z - p.z, d = Math.hypot(dx, dz);
       this.face(dx, dz, dt);
       if (Math.random() < dt * 0.4) this.strafe = -this.strafe;
-      if (d > 9) this.go(dx, dz, 3.3);
+      if (this.perch) this.go(0, 0, 0); // lookouts hold their high ground
+      else if (d > 9) this.go(dx, dz, 3.3);
       else if (d < 4.5) this.go(-dx, -dz, 2.6);
       else this.go(-dz * this.strafe, dx * this.strafe, 2.2);
       if (this.cool <= 0) { this.burst = 3; this.cool = 1.1 + Math.random() * 0.9; }
@@ -351,6 +357,8 @@ export class Kid extends Actor {
         if (this.ammo <= 0) this.say('I\'M OUT!', 1.5);
       }
       this.chase = null; this.path = null;
+    } else if (this.perch) {
+      this.go(0, 0, 0); if (this.ammo <= 0 && (this.refillT += dt) > 5) { this.ammo = AMMO; this.refillT = 0; }
     } else if (this.ammo <= 0) {
       // out of water: run for a pool your side holds, or all the way home
       const r = g.refillSpot(this);

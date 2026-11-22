@@ -162,7 +162,7 @@ function sfx(name, pos) {
 
 // ------------------------------------------------------------------ world
 const world = new World(scene);
-const { loot, flaps, signs, towers, shops, standees } = generate(world);
+const { loot, flaps, signs, towers, shops, standees, ramps, doors } = generate(world);
 const fx = new Fx();
 const soggyBlue = new THREE.Color(0x27356b);
 
@@ -181,7 +181,7 @@ const player = {
 
 const game = {
   scene, world, fx, player, soggyBlue, sfx,
-  mode: 'menu', time: 0, guards: [], notes: [], lamps: [], notesRead: 0, district: -1, checkpoint: null, lock: null, ended: false, actors: [player], items: [], flags: [], pools: [], allies: [], broken: [], goalSel: null, stage: 0, graceT: 0, flash: 0, won: false, marketOpen: false,
+  mode: 'menu', time: 0, guards: [], notes: [], lamps: [], doors: [], notesRead: 0, district: -1, checkpoint: null, lock: null, ended: false, actors: [player], items: [], flags: [], pools: [], allies: [], broken: [], goalSel: null, stage: 0, graceT: 0, flash: 0, won: false, marketOpen: false,
   nearPlayer(p, d) { const dx = p.x - player.pos.x, dz = p.z - player.pos.z; return dx * dx + dz * dz < d * d; },
   freeSpot(x, z, range, avoid = 0) {
     for (let n = 0; n < 80; n++) {
@@ -497,6 +497,54 @@ function prop(parent, geo, mat, w, h, d, x, y, z, rx = 0, ry = 0, rz = 0) {
   }, 1, 26, 0xff9d5c); // a sun that never quite sets
 }
 
+// ------------------------------------------------------------------ ramps, stairs and doors
+{
+  // A wedge that rises toward +x from h0 to h1; turned to face the cell's uphill direction.
+  const wedge = (h0, h1) => {
+    const A = [-.5, 0, -.5], B = [.5, 0, -.5], C = [.5, 0, .5], D = [-.5, 0, .5], E = [-.5, h0, -.5], F = [.5, h1, -.5], G = [.5, h1, .5], H = [-.5, h0, .5];
+    const tris = [A, B, C, A, C, D, E, H, G, E, G, F, B, F, G, B, G, C, A, D, H, A, H, E, A, F, B, A, E, F, D, C, G, D, G, H];
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat(), 3)); g.computeVertexNormals(); return g;
+  };
+  const geos = [wedge(0, 1), wedge(0, 0.5), wedge(0.5, 1)], tones = [0xc9a26b, 0xb98f58, 0xd3ae76].map(c => new THREE.MeshLambertMaterial({ color: c })), step = new THREE.MeshLambertMaterial({ color: 0xa9804c });
+  ramps.forEach((r, i) => {
+    const g = new THREE.Group(); g.position.set(r.x + 0.5, r.y, r.z + 0.5); g.rotation.y = -r.dir * Math.PI / 2; scene.add(g);
+    if (r.stairs) { // three box steps, with a darker tread so they read as stairs
+      for (let k = 0; k < 3; k++) { const h = (k + 1) / 3, w = 1 - k / 3; prop(g, unitBox, tones[i % 3], w, h, 1, 0.5 - w / 2, h / 2, 0); prop(g, unitBox, step, 1 / 3, 0.03, 1, -0.5 + k / 3 + 1 / 6, h + 0.012, 0).castShadow = false; }
+    } else { const m = new THREE.Mesh(geos[r.part], tones[i % 3]); m.castShadow = m.receiveShadow = true; g.add(m); }
+    hang([r.x, r.y, r.z], () => { g.visible = false; });
+  });
+  // Doors are a flap of cardboard on a tape hinge. Walk into one and it swings away from you.
+  const face = new THREE.MeshLambertMaterial({ map: paint(128, 256, g => {
+    g.fillStyle = '#c9a26b'; g.fillRect(0, 0, 128, 256); g.strokeStyle = '#2a2018'; g.lineWidth = 7; g.strokeRect(5, 5, 118, 246);
+    g.lineWidth = 4; g.strokeRect(24, 26, 80, 70); g.strokeRect(24, 120, 80, 100);
+    g.beginPath(); g.arc(100, 132, 9, 0, 7); g.stroke(); g.fillStyle = '#f2e3b8'; g.fillRect(0, 30, 10, 26); g.fillRect(0, 190, 10, 26);
+    g.fillStyle = '#2a2018'; g.font = 'bold 20px sans-serif'; g.textAlign = 'center'; g.fillText('PUSH', 64, 68);
+  }) });
+  for (const d of doors) {
+    const pivot = new THREE.Group(); pivot.position.set(d.horiz ? d.x : d.x + 0.5, 0, d.horiz ? d.z + 0.5 : d.z); pivot.rotation.y = d.horiz ? 0 : -Math.PI / 2; scene.add(pivot);
+    prop(pivot, unitBox, face, 0.96, 1.94, 0.06, 0.5, 0.97, 0);
+    const door = { ...d, cx: d.x + 0.5, cz: d.z + 0.5, pivot, base: pivot.rotation.y, angle: 0, open: false, dir: 1, t: 0, gone: false };
+    for (const y of [0, 1]) hang([d.x, y, d.z], () => { if (door.gone) return; door.gone = true; pivot.visible = false; world.set(d.x, 0, d.z, T.AIR); world.set(d.x, 1, d.z, T.AIR); });
+    game.doors.push(door);
+  }
+}
+function updateDoors(dt) {
+  for (const d of game.doors) {
+    if (d.gone || (!d.open && Math.abs(d.angle) < 0.01 && !game.nearPlayer({ x: d.cx, z: d.cz }, 30))) continue;
+    let push = 0;
+    for (const a of game.actors) {
+      if (a.isDecoy || a.out > 0 || Math.abs(a.pos.x - d.cx) > 1.25 || Math.abs(a.pos.z - d.cz) > 1.25 || a.pos.y > 1.5) continue;
+      push = (d.horiz ? a.pos.z - d.cz : a.pos.x - d.cx) > 0 ? 1 : -1; break;
+    }
+    if (push) {
+      if (!d.open) { d.open = true; d.dir = d.horiz ? push : -push; world.set(d.x, 0, d.z, T.AIR); world.set(d.x, 1, d.z, T.AIR); sfx('thunk', tmp.set(d.cx, 1, d.cz)); }
+      d.t = 1.4;
+    } else if (d.open && (d.t -= dt) <= 0) { d.open = false; world.set(d.x, 0, d.z, T.FLAP); world.set(d.x, 1, d.z, T.FLAP); }
+    d.angle += ((d.open ? d.dir * 1.5 : 0) - d.angle) * Math.min(1, dt * 9);
+    d.pivot.rotation.y = d.base + d.angle;
+  }
+}
+
 // ------------------------------------------------------------------ cardboard cut-out kids
 // They draw fire. The tribes' ones fool you and each other; yours fool them.
 const TEAM_COL = { '-1': 0xe9dcc0, 0: 0x35a7c4, 1: 0xd9483b, 2: 0x8a4fd1, 3: 0x3fa35c };
@@ -712,6 +760,11 @@ animalAt('goose', 17, 78, 3); animalAt('goose', 112, 50, 3); animalAt('goose', 8
 for (const gd of LEVEL.guards) {
   const k = addActor(new Kid(game, { ...COSTUME[gd.team], team: gd.team, x: gd.x, z: gd.z }));
   k.noRespawn = true; k.range = 4; k.district = gd.district; game.guards.push(k);
+}
+// lookouts on the high ground. They don't hold a gate; they just make the low road expensive.
+for (const lo of LEVEL.lookouts) {
+  const k = addActor(new Kid(game, { ...COSTUME[lo.team], team: lo.team, x: lo.x, z: lo.z }));
+  k.pos.y = lo.y + 0.05; k.noRespawn = true; k.perch = true; k.district = -1;
 }
 
 // you, seen from over your shoulder
@@ -990,7 +1043,7 @@ function findLock() {
     if (a.team <= 0 || a.isDecoy || !a.targetable()) continue;
     const dx = a.pos.x - p.x, dz = a.pos.z - p.z, d = Math.hypot(dx, dz);
     if (d > 15 || d < 0.3) continue;
-    const ang = Math.abs(yawDiff(dx, dz)) + d * 0.01;
+    const ang = Math.abs(yawDiff(dx, dz)) + d * 0.01 - (a === game.lock ? 0.35 : 0); // stick with whoever you're already on
     if (ang < ba && world.los(p.x, p.y + 1.2, p.z, a.pos.x, a.pos.y + 0.8, a.pos.z)) { ba = ang; best = a; }
   }
   return best;
@@ -1181,7 +1234,7 @@ function step(dt) {
   let gone = false;
   for (const a of game.actors) if (a !== player) { a.update(dt); gone ||= a.dead; }
   if (gone) game.actors = game.actors.filter(a => !a.dead);
-  updatePools(dt); director(dt); rebuild(dt);
+  updatePools(dt); director(dt); rebuild(dt); updateDoors(dt);
   for (const l of game.lamps) { // lamps breathe; a few are on their way out
     const f = l.flicker ? (Math.sin(game.time * 23 + l.seed) > 0.2 || Math.sin(game.time * 3.1 + l.seed) > 0.6 ? 1 : 0.15) : 0.9 + 0.1 * Math.sin(game.time * 2 + l.seed);
     l.sm.opacity = f; l.pm.opacity = 0.55 * f;

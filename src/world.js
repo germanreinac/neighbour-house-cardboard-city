@@ -8,6 +8,9 @@ export const CITY = 128; // city occupies z in [0, CITY)
 export const T = {
   AIR: 0, CARD: 1, WOOD: 2, WALL: 3, FENCE: 4, LEAF: 5, CLUTTER: 6, DOOR: 7, TRUNK: 8, EDGE: 9, ROOF: 10,
   GHOST: 11, // solid but not drawn: the collision under the tall non-voxel towers
+  // Types from here up are cardboard that is drawn as its own mesh rather than a cube.
+  RAMP: 12,  // 12..23: a slope. (t-12)&3 is the uphill direction (+x, +z, -x, -z); (t-12)>>2 is full, lower half, upper half
+  FLAP: 24,  // a closed cardboard door
 };
 const SOLID_COLORS = {
   [T.WOOD]: 0xa9743f, [T.WALL]: 0xe6dcc6, [T.FENCE]: 0xb08a5c, [T.LEAF]: 0x4f8f4a,
@@ -135,6 +138,24 @@ export class World {
     return this.type[x + SX * (z + SZ * y)] !== 0;
   }
   solidAt(px, py, pz) { return this.solid(Math.floor(px), Math.floor(py), Math.floor(pz)); }
+  // What stops a walking body. Ramps don't: you walk into them and are lifted onto the slope.
+  blocks(x, y, z) {
+    if (!this.solid(x, y, z)) return false;
+    const t = this.get(x, y, z); return t < T.RAMP || t > 23;
+  }
+  // Height of the slope under a body at (px,py,pz), or null. The uphill edge of the body leads,
+  // so you reach the top exactly as you reach the next cell.
+  floorAt(px, py, pz, r) {
+    const x = Math.floor(px), z = Math.floor(pz);
+    for (let y = Math.floor(py + 0.45); y >= Math.floor(py - 0.45) && y >= 0; y--) {
+      const t = this.get(x, y, z); if (t < T.RAMP || t > 23) continue;
+      const d = (t - 12) & 3, part = (t - 12) >> 2, fx = px - x, fz = pz - z;
+      const u = Math.min(1, Math.max(0, (d === 0 ? fx : d === 1 ? fz : d === 2 ? 1 - fx : 1 - fz) + r));
+      const h0 = part === 2 ? 0.5 : 0, h1 = part === 1 ? 0.5 : 1;
+      return y + h0 + (h1 - h0) * u;
+    }
+    return null;
+  }
   set(x, y, z, t) {
     if (!this.inb(x, y, z)) return;
     const i = this.idx(x, y, z);
@@ -146,7 +167,7 @@ export class World {
   soak(x, y, z, amount, byPlayer) {
     if (!this.inb(x, y, z)) return false;
     const i = this.idx(x, y, z);
-    if (this.type[i] !== T.CARD) return false;
+    if (this.type[i] !== T.CARD && this.type[i] < T.RAMP) return false; // ramps and doors are cardboard too
     this.wet[i] += amount;
     if (this.wet[i] >= 1) {
       this.set(x, y, z, T.AIR);
@@ -181,7 +202,7 @@ export class World {
     for (let y = Math.floor(y0); y <= Math.floor(y1); y++)
       for (let z = Math.floor(z0); z <= Math.floor(z1); z++)
         for (let x = Math.floor(x0); x <= Math.floor(x1); x++)
-          if (this.solid(x, y, z)) return false;
+          if (this.blocks(x, y, z)) return false;
     return true;
   }
 
@@ -212,7 +233,7 @@ export class World {
     const x0 = cx * CH, z0 = cz * CH;
     for (let y = 0; y < SY; y++) for (let z = z0; z < z0 + CH; z++) for (let x = x0; x < x0 + CH; x++) {
       const t = this.type[x + SX * (z + SZ * y)];
-      if (!t || t === T.GHOST) continue;
+      if (!t || t >= T.GHOST) continue;
       if (t === T.CARD || t === T.EDGE) nCard++; else nSolid++;
     }
     ch.card = this.ensure(ch.card, nCard, this.cardMat);
@@ -221,7 +242,7 @@ export class World {
     const m = this._m, c = this._c;
     for (let y = 0; y < SY; y++) for (let z = z0; z < z0 + CH; z++) for (let x = x0; x < x0 + CH; x++) {
       const i = x + SX * (z + SZ * y), t = this.type[i];
-      if (!t || t === T.GHOST) continue;
+      if (!t || t >= T.GHOST) continue;
       m.makeTranslation(x + 0.5, y + 0.5, z + 0.5);
       const h = hash(i);
       if (t === T.CARD) {
@@ -293,7 +314,7 @@ export const LEVEL = {
     { x: 115.5, z: 92.5, text: 'I found a cut-out that looks like me. I didn\'t make it.' },
     { x: 90.5, z: 64.5, text: 'If you make it to the Treehouse, don\'t let them measure you.' },
   ],
-  guards: [], gates: [], lamps: [], arrows: [], cars: [], vendors: [], creepers: [],
+  guards: [], gates: [], lamps: [], arrows: [], cars: [], vendors: [], creepers: [], lookouts: [],
 };
 export function districtAt(x, z) {
   if (Math.max(Math.abs(x - 64), Math.abs(z - 64)) <= 35) return 4;
@@ -314,8 +335,13 @@ export function generate(world, seed = 7) {
       if (x === x0 || x === x1 || z === z0 || z === z1) set(x, y, z, t);
     if (roofT) fill(x0, h, z0, x1, h, z1, roofT);
   };
-  const loot = [], flaps = [], signs = [], towers = [], shops = [], standees = [];
+  const loot = [], flaps = [], signs = [], towers = [], shops = [], standees = [], ramps = [], doors = [];
   const L = LEVEL;
+  // one cell of slope, with boxes stacked under it
+  const ramp = (x, y, z, dir, part = 0, stairs = false) => {
+    if (y > 0) fill(x, 0, z, x, y - 1, z, T.CARD);
+    set(x, y, z, T.RAMP + part * 4 + dir); ramps.push({ x, y, z, dir, part, stairs });
+  };
 
   // mask: 0 free to build on, 1 a building (others keep a gap from it), 2 kept clear (route, plazas, walls)
   const mask = new Uint8Array(CITY * CITY);
@@ -396,6 +422,7 @@ export function generate(world, seed = 7) {
   walk([[112, 58], [117, 72], [108, 84], [116, 93]], 2, { dark: true, walls: [26] });           // a dead end worth finding
   walk([[94, 64.5], [79, 64.5]], 3);
   reserve(52, 53, 85, 76);                                                                          // treehouse clearing
+  for (const [x0, z0, x1, z1] of [[36, 110, 51, 122], [13, 100, 27, 105], [5, 61, 22, 72], [50, 8, 66, 24], [100, 51, 120, 56]]) reserve(x0, z0, x1, z1); // high ground
   for (const p of PLACES.pools) { reserve(p.x - 4, p.z - 4, p.x + 4, p.z + 4); L.vendors.push({ x: p.x - 3.5, z: p.z - 3.5 }); }
   for (const n of L.notes) reserve(Math.floor(n.x) - 1, Math.floor(n.z) - 1, Math.floor(n.x) + 1, Math.floor(n.z) + 1);
 
@@ -446,7 +473,8 @@ export function generate(world, seed = 7) {
       shell(x0, z0, x1, z1, SY, T.GHOST, 0, h + 1);
       top = y;
     }
-    const doorSide = ri(0, 3);
+    const loft = h >= 6 && w >= 7 && d >= 5 && R() < 0.7; // an upstairs, reached by a ramp along the near wall
+    const doorSide = loft ? ri(1, 3) : ri(0, 3);
     for (let side = 0; side < 4; side++) {
       const horiz = side < 2, near = side % 2 === 0, len = horiz ? w : d;
       const fx = horiz ? (x0 + x1 + 1) / 2 : (near ? x0 : x1 + 1), fz = horiz ? (near ? z0 : z1 + 1) : (z0 + z1 + 1) / 2;
@@ -454,9 +482,10 @@ export function generate(world, seed = 7) {
       const sx = horiz ? Math.floor(fx) : (near ? x0 : x1), sz = horiz ? (near ? z0 : z1) : Math.floor(fz);
       if (R() < 0.4) flaps.push({ x: fx, y: tall ? top : h, z: fz, len: len - 0.3, dx, dz, a: R() * 1.5 - 0.45, sup: tall ? null : [sx, h - 1, sz] });
       if (side === doorSide) {
-        if (R() < 0.6) {
+        if (loft || R() < 0.7) {
           const dxx = horiz ? ri(x0 + 1, x1 - 1) : sx, dzz = horiz ? sz : ri(z0 + 1, z1 - 1);
           fill(dxx, 0, dzz, dxx, 1, dzz, T.AIR);
+          if (R() < 0.75) { fill(dxx, 0, dzz, dxx, 1, dzz, T.FLAP); doors.push({ x: dxx, z: dzz, horiz }); } // a door you can push open
         }
       } else if (len >= 6 && R() < 0.34) {
         shops.push({ x: horiz ? sx + 0.5 : fx, z: horiz ? fz : sz + 0.5, dx, dz, ax: horiz ? 1 : 0, az: horiz ? 0 : 1, sx, sz, kind: ri(0, SHOPS - 1) });
@@ -465,6 +494,15 @@ export function generate(world, seed = 7) {
         const wx = horiz ? ri(x0 + 1, x1 - 1) : sx, wz = horiz ? sz : ri(z0 + 1, z1 - 1);
         set(wx, ri(2, h - 2), wz, T.AIR);
       }
+    }
+    if (loft) {
+      for (let z = z0 + 1; z < z1; z++) for (let x = x0 + 1; x < x1; x++) if (z > z0 + 1 || x >= x0 + 5) set(x, 3, z, T.CARD);
+      for (let i = 0; i < 4; i++) ramp(x0 + 1 + i, i, z0 + 1, 0, 0, i % 2 === 0);
+      for (let k = 0; k < 2; k++) { // a balcony opening or two upstairs
+        const side = ri(1, 3), wx = side === 1 ? ri(x0 + 1, x1 - 1) : (side === 2 ? x0 : x1), wz = side === 1 ? z1 : ri(z0 + 2, z1 - 1);
+        fill(wx, 4, wz, wx, Math.min(5, h - 1), wz, T.AIR);
+      }
+      loot.push({ x: x1 - 0.5, y: 4, z: z1 - 0.5, kind: R() < 0.5 ? 'caps' : R() < 0.5 ? 'balloon' : 'bottle' });
     }
     if (R() < 0.6) {
       const k = R();
@@ -477,6 +515,34 @@ export function generate(world, seed = 7) {
   for (const b of barricades) for (let k = -b.w / 2 - 2.5; k <= b.w / 2 + 2.5; k += 0.5) {
     const x = Math.floor(b.x + b.nx * k), z = Math.floor(b.z + b.nz * k);
     if (!world.get(x, 0, z)) fill(x, 0, z, x, 2, z, T.CARD);
+  }
+  // --- high ground along the route, all of it cardboard and all of it meltable
+  { // The Stacks: a loading dock with a long ramp on one side and steps on the other
+    fill(41, 0, 117, 46, 1, 120, T.CARD);
+    for (const z of [118, 119]) { ramp(37, 0, z, 0, 1); ramp(38, 0, z, 0, 2); ramp(39, 1, z, 0, 1); ramp(40, 1, z, 0, 2); ramp(48, 0, z, 2, 0, true); ramp(47, 1, z, 2, 0, true); }
+    L.lookouts.push({ team: 1, x: 43.5, y: 2, z: 119.5 }); loot.push({ x: 45.5, y: 2, z: 117.5, kind: 'balloon' });
+  }
+  { // the Knights' watchtower by the first gate
+    for (const [x, z] of [[18, 101], [21, 101], [18, 103], [21, 103]]) fill(x, 0, z, x, 2, z, T.CARD);
+    fill(18, 3, 101, 21, 3, 103, T.CARD);
+    for (let i = 0; i < 4; i++) ramp(25 - i, i, 102, 2, 0, true);
+    L.lookouts.push({ team: 1, x: 19.5, y: 4, z: 102.5 });
+  }
+  { // a footbridge over The Narrows
+    fill(6, 3, 66, 20, 3, 67, T.CARD);
+    for (let i = 0; i < 4; i++) for (const x of [19, 20]) ramp(x, i, 71 - i, 3, 0, true);
+    for (let i = 0; i < 4; i++) for (const x of [6, 7]) ramp(x, i, 62 + i, 1, 0, true);
+    L.lookouts.push({ team: 2, x: 13.5, y: 4, z: 66.5 }); loot.push({ x: 9.5, y: 4, z: 67.5, kind: 'caps' });
+  }
+  { // the box pyramid in The Dry District, with a full bottle on top
+    fill(53, 0, 11, 63, 0, 21, T.CARD); fill(55, 1, 13, 61, 1, 19, T.CARD); fill(57, 2, 15, 59, 2, 17, T.CARD);
+    for (let i = 0; i < 3; i++) { ramp(52 + i * 2, i, 16, 0, 0, true); ramp(64 - i * 2, i, 16, 2, 0, true); ramp(58, i, 10 + i * 2, 1, 0, true); ramp(58, i, 22 - i * 2, 3, 0, true); }
+    L.lookouts.push({ team: 3, x: 55.5, y: 2, z: 13.5 }, { team: 3, x: 61.5, y: 2, z: 19.5 }); loot.push({ x: 58.5, y: 3, z: 15.5, kind: 'bottle' });
+  }
+  { // a catwalk through Lights Out
+    fill(104, 2, 53, 116, 2, 54, T.CARD);
+    for (const z of [53, 54]) for (let i = 0; i < 3; i++) { ramp(101 + i, i, z, 0); ramp(119 - i, i, z, 2); }
+    loot.push({ x: 110.5, y: 3, z: 53.5, kind: 'caps' });
   }
   // loose boxes for cover along the way
   for (let n = 0; n < 220; n++) {
@@ -519,5 +585,5 @@ export function generate(world, seed = 7) {
     fill(62, 0, 184, 62, 0, 184, T.CARD); fill(67, 0, 185, 67, 1, 185, T.CARD); fill(60, 0, 186, 60, 0, 186, T.CARD);
   }
   world.orig = world.type.slice();
-  return { loot, flaps, signs, towers, shops, standees };
+  return { loot, flaps, signs, towers, shops, standees, ramps, doors };
 }

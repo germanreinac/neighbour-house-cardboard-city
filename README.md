@@ -28,6 +28,19 @@ Barricades are taped across the route so you have to spend some. Pools refill yo
 checkpoints. A vending box by each pool trades bottle caps for upgrades. Ten of Milo's notes are
 scattered along the way.
 
+## Heights and doors
+
+Everything here is cardboard and melts like any other wall.
+
+- **Ramps and stairs** are walked up smoothly, with no jumping. Kids use them too.
+- **High ground on the route:** a loading dock in Checkpoint Street, the Knights' watchtower by the
+  first gate, a footbridge over The Narrows, a box pyramid in The Dry District with a full bottle
+  on top, and a catwalk through Lights Out. Lookouts stand on several of them.
+- **Lofts:** many taller buildings have an upstairs reached by a ramp along one wall, with a
+  balcony opening and something worth finding.
+- **Doors** are flaps on a tape hinge. Walk into one and it swings away from you, then falls shut
+  behind you. Closed doors block sight, so kids on the other side can't see you. Kids open them too.
+
 ## Controls on a phone
 
 Push the left stick the way you want to run. Your kid turns to face that way and the camera drifts
