@@ -37,6 +37,7 @@ float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); 
 vec3 cardSkin(vec3 wp, vec3 n){
   bool top = abs(n.y) > 0.5; bool xs = abs(n.x) > 0.5;
   vec2 uv = top ? wp.xz : vec2(xs ? wp.z : wp.x, wp.y);
+  float along = uv.x;
   vec2 B = top ? vec2(3.0, 3.0) : vec2(3.0, 2.0);
   if (!top) uv.x += mod(floor(uv.y / B.y), 2.0) * 1.5 + (xs ? 0.7 : 0.0);
   vec2 id = floor(uv / B) + (xs ? 17.0 : 0.0); vec2 f = fract(uv / B); vec2 m = f * B;
@@ -67,6 +68,21 @@ vec3 cardSkin(vec3 wp, vec3 n){
         float head = step(0.36, q.y) * step(q.y, 0.58) * step(abs(q.x), (0.58 - q.y) * 0.65);
         col = mix(col, col * 0.3, max(stem, head));
       }
+    }
+  }
+  // windows a kid drew on with a fat marker, above head height: some lit, some blue, all wobbly
+  if (!top && wp.y > 2.7) {
+    vec2 wv = vec2(along, wp.y) + 0.04 * sin(vec2(wp.y, along) * 4.3);
+    vec2 W = vec2(1.6, 2.1); vec2 wi = floor(wv / W); vec2 wf = fract(wv / W) * W;
+    float wr = h21(wi + (xs ? 31.0 : 5.0));
+    if (wr > 0.34) {
+      vec2 q = abs(wf - W * 0.5) - vec2(0.36, 0.52);
+      float sd = max(q.x, q.y), waa = fwidth(sd) + 0.004;
+      vec3 pane = wr > 0.84 ? vec3(0.95, 0.74, 0.2) : (wr > 0.6 ? vec3(0.4, 0.58, 0.7) : col * 0.8);
+      col = mix(col, pane, (1.0 - smoothstep(0.0, waa, sd)) * 0.9);
+      float line = 1.0 - smoothstep(0.035, 0.035 + waa, abs(sd));
+      float bars = (1.0 - smoothstep(0.02, 0.02 + waa, min(abs(wf.x - W.x * 0.5), abs(wf.y - W.y * 0.5)))) * step(sd, 0.0);
+      col = mix(col, vec3(0.05, 0.04, 0.04), max(line, bars) * 0.9);
     }
   }
   return col;
@@ -346,10 +362,11 @@ export function generate(world, seed = 7) {
       // upper floors are big single boxes, a little crooked, each smaller than the one below
       let sw = w, sd = d, y = h + 1;
       const cx = (x0 + x1 + 1) / 2, cz = (z0 + z1 + 1) / 2;
-      for (let k = ri(1, 3); k > 0; k--) {
+      const k0 = ri(1, 3);
+      for (let k = k0; k > 0; k--) {
         sw = Math.max(3, sw - R() * 1.6); sd = Math.max(3, sd - R() * 1.6);
         const sh = ri(4, 12);
-        towers.push({ x: cx + (R() - 0.5) * 0.8, z: cz + (R() - 0.5) * 0.8, y0: y, w: sw, d: sd, h: sh, yaw: (R() - 0.5) * 0.16, tilt: (R() - 0.5) * 0.05 });
+        towers.push({ x: cx + (R() - 0.5) * 0.8, z: cz + (R() - 0.5) * 0.8, y0: y, w: sw, d: sd, h: sh, yaw: (R() - 0.5) * 0.16, tilt: (R() - 0.5) * 0.05, top: k === 1, base: k0 === k });
         y += sh;
       }
       shell(x0, z0, x1, z1, SY, T.GHOST, 0, h + 1);

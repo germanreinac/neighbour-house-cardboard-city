@@ -1,6 +1,6 @@
 # Cardboard City
 
-A small 3D first-person game prototype. You go to your friend Milo's house after school. His big
+A small 3D third-person game prototype. You go to your friend Milo's house after school. His big
 brother lets you in, you walk through the mess, open the back door, and the pile of boxes in the
 backyard turns out to be a whole city run by kids.
 
@@ -11,6 +11,10 @@ as fights move through it.
 ## What's in the prototype
 
 - Intro: front door, big brother, wrecked house, backyard, the hole in the big box.
+- Third-person camera over your shoulder that tucks in behind you in narrow alleys.
+- Handmade city detail: marker-drawn windows on every tower, a painted road with parked cardboard
+  cars, tube streetlights, a traffic light, hydrants, a lemonade stand, planks and bunting strung
+  between towers, rooftop water tanks, and a cardboard sun and clouds hung on strings.
 - A dense city of cardboard: alleys one or two boxes wide, buildings with crooked towers stacked
   far overhead, fake shopfronts with painted doors, hand-lettered signs, and cardboard cut-out
   kids standing around to draw fire. The bottom floors are destructible; the towers are not.

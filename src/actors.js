@@ -67,7 +67,7 @@ export function makeKid({ shirt = 0x4f7fd9, pants = 0x3b4a6b, costume = 'none', 
   part(head, ball, 0.06, 0.08, 0.04, -0.09, 0.04, -0.195, 0x1c1c1c); part(head, ball, 0.06, 0.08, 0.04, 0.09, 0.04, -0.195, 0x1c1c1c);
   if (gun) {
     armR.rotation.x = 1.35;
-    box(armR, 0.09, 0.3, 0.12, 0, -0.42, 0.06, 0x35c46a); box(armR, 0.1, 0.12, 0.16, 0, -0.34, 0.16, 0xff8a2a);
+    g.userData.gunParts = [box(armR, 0.09, 0.3, 0.12, 0, -0.42, 0.06, 0x35c46a), box(armR, 0.1, 0.12, 0.16, 0, -0.34, 0.16, 0xff8a2a)];
   }
   if (costume === 'knight') {
     box(head, 0.48, 0.48, 0.48, 0, 0.02, 0, KRAFT); box(head, 0.34, 0.08, 0.02, 0, 0.04, -0.25, 0x241a12);
@@ -89,7 +89,7 @@ export function makeKid({ shirt = 0x4f7fd9, pants = 0x3b4a6b, costume = 'none', 
   }
   g.add(legL, legR, armL, armR, head);
   g.scale.setScalar(scale);
-  g.userData = { legL, legR, armL, armR, head, bodyMat, shirt: new THREE.Color(shirt) };
+  g.userData = { ...g.userData, legL, legR, armL, armR, head, bodyMat, shirt: new THREE.Color(shirt) };
   return g;
 }
 

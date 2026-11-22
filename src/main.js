@@ -1,7 +1,7 @@
 // Cardboard City: you visit a friend, walk through his wrecked house, and find a city in the backyard.
 import * as THREE from '../vendor/three.module.min.js';
 import { World, generate, PLACES, T, CITY, SY } from './world.js';
-import { Kid, Animal, moveActor, JUMP, WATER_GRAV } from './actors.js';
+import { Kid, Animal, makeKid, moveActor, JUMP, WATER_GRAV } from './actors.js';
 
 const $ = id => document.getElementById(id);
 const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -13,7 +13,7 @@ const canvas = $('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(74, 1, 0.08, 200);
+const camera = new THREE.PerspectiveCamera(66, 1, 0.08, 320);
 camera.rotation.order = 'YXZ';
 scene.add(camera);
 // Late-afternoon sun with real shadows: boxes need shade to read as a city rather than a grid.
@@ -352,6 +352,120 @@ function stick(geo, mat, w, h, d, x, y, z, dx, dz, sups, tiltX = 0, roll = 0) {
   });
 }
 
+// ------------------------------------------------------------------ street life: a kid's idea of a city
+const skyline = new THREE.Group(); scene.add(skyline); // hidden until you crawl into the pile
+const lam = c => new THREE.MeshLambertMaterial({ color: c }), glow = c => new THREE.MeshBasicMaterial({ color: c });
+const tubeGeo = new THREE.CylinderGeometry(0.5, 0.5, 1, 10);
+function prop(parent, geo, mat, w, h, d, x, y, z, rx = 0, ry = 0, rz = 0) {
+  const m = new THREE.Mesh(geo, mat); m.scale.set(w, h, d); m.position.set(x, y, z); m.rotation.set(rx, ry, rz);
+  m.castShadow = m.receiveShadow = true; parent.add(m); return m;
+}
+{
+  // the road: painted cardboard with a taped centre line
+  const road = paint(64, 256, g => {
+    g.fillStyle = '#5d554c'; g.fillRect(0, 0, 64, 256); g.fillStyle = 'rgba(255,255,255,.07)';
+    for (let i = 0; i < 60; i++) g.fillRect((i * 37) % 64, (i * 91) % 256, 6, 2);
+    g.fillStyle = '#e9dcc0'; g.fillRect(2, 0, 3, 256); g.fillRect(59, 0, 3, 256);
+    g.fillStyle = '#f2c94a'; g.fillRect(30, 20, 4, 90); g.fillRect(30, 150, 4, 90);
+  });
+  road.wrapS = road.wrapT = THREE.RepeatWrapping;
+  const strip = (w, len, x, z, turn) => {
+    const t = road.clone(); t.needsUpdate = true; t.repeat.set(1, len / 8);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, len), new THREE.MeshLambertMaterial({ map: t }));
+    m.rotation.set(-Math.PI / 2, 0, turn ? Math.PI / 2 : 0); m.position.set(x, 0.036, z); m.receiveShadow = true; scene.add(m);
+  };
+  strip(4, 49, 65, 101.5, false); strip(2, 112, 64, 89, true);
+
+  // parked cars: boxes with wheels drawn on. You can climb on them but not walk through them.
+  const paintJob = [0xd9483b, 0x2f7fb5, 0xe8c74a, 0x3fa35c, 0xe07b39].map(lam), tyre = lam(0x1f1b1a), glass = lam(0xbfe0ee);
+  [[63, 79, 0], [66, 83, 1], [63, 93, 2], [66, 98, 3], [63, 104, 4], [30, 88, 1], [100, 88, 0]].forEach(([x, z, c]) => {
+    const along = x === 63 || x === 66, g = new THREE.Group(); g.position.set(along ? x + 0.5 : x + 1.5, 0, along ? z + 1.5 : z + 0.5);
+    if (!along) g.rotation.y = Math.PI / 2;
+    g.rotation.z = (c - 2) * 0.012;
+    prop(g, unitBox, paintJob[c], 0.96, 0.62, 2.9, 0, 0.56, 0); prop(g, unitBox, paintJob[c], 0.9, 0.5, 1.4, 0, 1.1, 0.15);
+    prop(g, unitBox, glass, 0.92, 0.36, 1.1, 0, 1.12, 0.15); prop(g, unitBox, glow(0xfff2b0), 0.7, 0.14, 0.04, 0, 0.62, -1.46);
+    for (const [wx, wz] of [[-0.5, -0.95], [0.5, -0.95], [-0.5, 0.95], [0.5, 0.95]]) prop(g, tubeGeo, tyre, 0.62, 0.1, 0.62, wx, 0.31, wz, 0, 0, Math.PI / 2);
+    scene.add(g);
+    for (let k = 0; k < 3; k++) world.set(along ? x : x + k, 0, along ? z + k : z, T.GHOST);
+  });
+
+  // streetlights from wrapping-paper tubes, a traffic light, hydrants, a mailbox
+  const tubeMat = lam(0xb89460), dark = lam(0x2a2422);
+  for (const [x, z] of [[62.75, 81], [67.25, 87], [62.75, 96], [67.25, 102], [62.75, 110], [67.25, 118], [40, 87.75], [88, 90.25], [110, 87.75], [18, 90.25]]) {
+    const dir = x < 63 ? 1 : x > 67 ? -1 : 0, dz = dir ? 0 : (z < 89 ? 1 : -1);
+    prop(scene, tubeGeo, tubeMat, 0.13, 3.8, 0.13, x, 1.9, z); prop(scene, unitBox, tubeMat, dir ? 0.9 : 0.1, 0.1, dir ? 0.1 : 0.9, x + dir * 0.4, 3.75, z + dz * 0.4);
+    prop(scene, unitBox, glow(0xfff0a8), 0.34, 0.24, 0.34, x + dir * 0.8, 3.6, z + dz * 0.8);
+  }
+  prop(scene, tubeGeo, tubeMat, 0.13, 3, 0.13, 62.6, 1.5, 90.4); prop(scene, unitBox, dark, 0.36, 1, 0.3, 62.6, 3.4, 90.4);
+  [0xe2553f, 0xf2c94a, 0x3fa35c].forEach((c, i) => prop(scene, tubeGeo, glow(c), 0.22, 0.04, 0.22, 62.6, 3.72 - i * 0.3, 90.24, Math.PI / 2));
+  for (const [x, z] of [[67.3, 92.5], [62.7, 107], [77.5, 108.5], [56, 78.5], [92, 87.7]]) {
+    prop(scene, tubeGeo, lam(0xd9483b), 0.3, 0.55, 0.3, x, 0.28, z); prop(scene, tubeGeo, lam(0xd9483b), 0.2, 0.16, 0.2, x, 0.63, z); prop(scene, tubeGeo, lam(0xb93a2f), 0.14, 0.44, 0.14, x, 0.36, z, 0, 0, Math.PI / 2);
+  }
+  prop(scene, tubeGeo, tubeMat, 0.1, 0.8, 0.1, 67.3, 0.4, 112); prop(scene, unitBox, lam(0x2f5fb5), 0.5, 0.5, 0.4, 67.3, 1, 112);
+
+  // a lemonade stand by the South pool
+  const stand = new THREE.Group(); stand.position.set(69.5, 0, 107.2); scene.add(stand);
+  prop(stand, unitBox, tubeMat, 2.2, 0.9, 0.7, 0, 0.45, 0); prop(stand, tubeGeo, tubeMat, 0.08, 2.4, 0.08, -1, 1.2, 0); prop(stand, tubeGeo, tubeMat, 0.08, 2.4, 0.08, 1, 1.2, 0);
+  prop(stand, unitPlane, signMat('LEMONADE 5¢', true), 2.2, 0.75, 1, 0, 2.2, 0.06); prop(stand, tubeGeo, lam(0xf2c94a), 0.3, 0.34, 0.3, 0.5, 1.07, 0);
+
+  // planks and bunting strung between the towers, far over your head
+  const firsts = towers.filter(t => t.base), plank = lam(0xb98f58), string = lam(0x3a302a), spans = [];
+  for (let i = 0; i < firsts.length; i++) for (let j = i + 1; j < firsts.length && spans.length < 70; j++) {
+    const a = firsts[i], b = firsts[j], d = Math.hypot(a.x - b.x, a.z - b.z), y = Math.min(a.y0 + a.h, b.y0 + b.h) - 1 - ((i * 7 + j) % 3);
+    if (d < 6 || d > 13 || y < 7 || (i * 13 + j * 7) % 5 > 1) continue;
+    spans.push({ a, b, d, y, bunting: (i + j) % 2 === 0 });
+  }
+  for (const z of [80, 94, 108, 122]) spans.push({ a: { x: 61.5, z }, b: { x: 68.5, z: z + 1 }, d: 7.1, y: 5.2, bunting: true }); // over the main street
+  const pennants = new THREE.InstancedMesh(new THREE.BufferGeometry().setFromPoints([V3(-0.18, 0, 0), V3(0.18, 0, 0), V3(0, -0.42, 0)]),
+    new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }), spans.length * 12);
+  pennants.frustumCulled = false; let np = 0;
+  const FLAGC = [0xd9483b, 0xf2c94a, 0x35a7c4, 0x3fa35c, 0x8a4fd1, 0xf4f1ea];
+  for (const sp of spans) {
+    const ry = Math.atan2(sp.b.x - sp.a.x, sp.b.z - sp.a.z), mx = (sp.a.x + sp.b.x) / 2, mz = (sp.a.z + sp.b.z) / 2;
+    if (!sp.bunting) { prop(skyline, unitBox, plank, 0.9, 0.07, sp.d, mx, sp.y, mz, 0, ry); continue; }
+    prop(skyline, unitBox, string, 0.03, 0.03, sp.d, mx, sp.y, mz, 0, ry).castShadow = false;
+    for (let k = 1; k < 12; k++) {
+      const f = k / 12; dummy.position.set(sp.a.x + (sp.b.x - sp.a.x) * f, sp.y - 0.02 - Math.sin(f * Math.PI) * 0.25, sp.a.z + (sp.b.z - sp.a.z) * f);
+      dummy.rotation.set(0, ry + Math.PI / 2, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix();
+      pennants.setMatrixAt(np, dummy.matrix); pennants.setColorAt(np++, tone.setHex(FLAGC[(k + np) % FLAGC.length]));
+    }
+  }
+  pennants.count = np; skyline.add(pennants);
+
+  // rooftops: water tanks on stilts and bent aerials
+  towers.forEach((t, i) => {
+    if (!t.top) return;
+    const y = t.y0 + t.h - 0.25;
+    if (i % 4 === 0) {
+      prop(skyline, tubeGeo, tubeMat, 1.7, 1.5, 1.7, t.x, y + 1.75, t.z); prop(skyline, new THREE.ConeGeometry(0.5, 1, 10), lam(0x8c4a3c), 2, 0.7, 2, t.x, y + 2.85, t.z);
+      for (const [lx, lz] of [[-0.6, -0.6], [0.6, -0.6], [-0.6, 0.6], [0.6, 0.6]]) prop(skyline, unitBox, dark, 0.1, 1, 0.1, t.x + lx, y + 0.5, t.z + lz);
+    } else if (i % 4 === 1) {
+      prop(skyline, unitBox, dark, 0.06, 3.2, 0.06, t.x + 0.6, y + 1.6, t.z - 0.4, 0, 0, 0.08);
+      prop(skyline, unitBox, dark, 0.9, 0.05, 0.05, t.x + 0.5, y + 2.6, t.z - 0.4); prop(skyline, unitBox, dark, 0.6, 0.05, 0.05, t.x + 0.45, y + 3, t.z - 0.4);
+    }
+  });
+
+  // the sky: a cardboard sun and clouds hung on strings
+  const hung = (draw, n, size) => {
+    const map = paint(256, 512, g => { g.strokeStyle = '#3a302a'; g.lineWidth = 3; g.beginPath(); g.moveTo(128, 0); g.lineTo(128, 330); g.stroke(); g.lineJoin = 'round'; draw(g); });
+    const mat = new THREE.SpriteMaterial({ map, fog: false });
+    for (let i = 0; i < n; i++) {
+      const sp = new THREE.Sprite(mat), a = i * 2.4 + size, r = 18 + (i * 29) % 50;
+      sp.position.set(64 + Math.cos(a) * r, 34 + (i * 13) % 16, 64 + Math.sin(a) * r); sp.scale.set(size, size * 2, 1); skyline.add(sp);
+    }
+  };
+  hung(g => { // cloud
+    g.fillStyle = '#f4ead2'; g.strokeStyle = '#2a2018'; g.lineWidth = 7; g.beginPath();
+    g.arc(70, 410, 46, 2, 5); g.arc(118, 370, 52, 3.4, 5.6); g.arc(176, 392, 46, 4.2, 6.6); g.arc(190, 440, 36, 5.6, 8.2); g.lineTo(60, 472); g.closePath(); g.fill(); g.stroke();
+  }, 13, 13);
+  hung(g => { // sun
+    g.fillStyle = '#f2c94a'; g.strokeStyle = '#2a2018'; g.lineWidth = 7;
+    for (let i = 0; i < 12; i++) { const a = i * Math.PI / 6; g.beginPath(); g.moveTo(128 + Math.cos(a) * 78, 400 + Math.sin(a) * 78); g.lineTo(128 + Math.cos(a) * 112, 400 + Math.sin(a) * 112); g.stroke(); }
+    g.beginPath(); g.arc(128, 400, 66, 0, 7); g.fill(); g.stroke();
+    g.fillStyle = '#2a2018'; g.beginPath(); g.arc(106, 388, 6, 0, 7); g.arc(150, 388, 6, 0, 7); g.fill(); g.lineWidth = 5; g.beginPath(); g.arc(128, 404, 30, 0.4, 2.7); g.stroke();
+  }, 1, 26);
+}
+
 // ------------------------------------------------------------------ cardboard cut-out kids
 // They draw fire. The tribes' ones fool you and each other; yours fool them.
 const TEAM_COL = { '-1': 0xe9dcc0, 0: 0x35a7c4, 1: 0xd9483b, 2: 0x8a4fd1, 3: 0x3fa35c };
@@ -548,14 +662,39 @@ animalAt('dog', 66, 108); animalAt('dog', 92, 90);
 animalAt('cat', 50, 96); animalAt('cat', 82, 40); animalAt('cat', 40, 44); animalAt('cat', 70, 80);
 animalAt('goose', 34, 62, 3); animalAt('goose', 62, 30, 3); animalAt('goose', 102, 102, 3); animalAt('goose', 96, 64, 3);
 
-// water gun in your hand
-const gun = new THREE.Group();
+// you, seen from over your shoulder
+const avatar = makeKid({ shirt: 0x2f6fd0, pants: 0x4a4038, costume: 'none' });
 {
-  const b = (w, h, d, x, y, z, c) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshLambertMaterial({ color: c, fog: false })); m.position.set(x, y, z); gun.add(m); };
-  b(0.07, 0.09, 0.36, 0, 0, 0, 0x35c46a); b(0.06, 0.14, 0.07, 0, -0.1, 0.1, 0x35c46a);
-  b(0.09, 0.1, 0.16, 0, 0.09, 0.06, 0xff8a2a); b(0.035, 0.035, 0.1, 0, 0.01, -0.22, 0xffd23f);
+  const u = avatar.userData, b = (w, h, d, x, y, z, c) => { const m = new THREE.Mesh(unitBox, new THREE.MeshLambertMaterial({ color: c })); m.scale.set(w, h, d); m.position.set(x, y, z); avatar.add(m); return m; };
+  b(0.3, 0.36, 0.16, 0, 0.66, 0.2, 0xff8a2a); b(0.4, 0.1, 0.44, 0, 1.27, 0, 0xe2553f); b(0.36, 0.05, 0.2, 0, 1.23, -0.28, 0xe2553f); // water pack, red cap
+  u.pole = b(0.04, 1.5, 0.04, 0.16, 1.2, 0.3, 0xe8dcc0); u.cloth = b(0.5, 0.34, 0.03, 0.42, 1.74, 0.3, 0xffffff); // a captured flag rides on your back
+  avatar.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  avatar.visible = false; scene.add(avatar);
 }
-gun.scale.setScalar(0.62); gun.position.set(0.24, -0.2, -0.45); gun.visible = false; camera.add(gun);
+const CAM = { dist: 4, cur: 4, side: 0.5 }, pivot = V3(), back = V3();
+function updateCamera(dt) {
+  const p = player.pos, cp = Math.cos(player.pitch), sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
+  back.set(sy * cp, -Math.sin(player.pitch), cy * cp);
+  // sit over the right shoulder when there's room, tuck in behind the head in a narrow alley
+  const roomy = !world.solidAt(p.x + cy * 0.85, p.y + 1.4, p.z - sy * 0.85);
+  CAM.side += ((roomy ? 0.5 : 0) - CAM.side) * Math.min(1, dt * 8);
+  pivot.set(p.x + cy * CAM.side, p.y + 1.6, p.z - sy * CAM.side);
+  const h = world.raycast(pivot, back, CAM.dist + 0.35, 0.05);
+  const want = h ? Math.max(0.2, h.dist - 0.35) : CAM.dist;
+  CAM.cur = want < CAM.cur ? want : Math.min(want, CAM.cur + dt * 5);
+  camera.position.copy(pivot).addScaledVector(back, CAM.cur);
+  camera.rotation.set(player.pitch, player.yaw, 0);
+
+  const u = avatar.userData, sp = Math.hypot(player.vel.x, player.vel.z);
+  avatar.visible = CAM.cur > 0.9; avatar.position.copy(p); avatar.rotation.y = player.yaw;
+  player.walk = (player.walk || 0) + sp * dt * 3.2;
+  const sw = Math.sin(player.walk) * Math.min(1, sp / 2) * 0.7;
+  u.legL.rotation.x = sw; u.legR.rotation.x = -sw; u.armL.rotation.x = -sw; u.armR.rotation.x = 1.45 + player.pitch;
+  u.bodyMat.color.copy(u.shirt).lerp(soggyBlue, Math.min(0.75, player.wetness / 110));
+  for (const m of u.gunParts) m.visible = player.hasGun;
+  const carried = game.flags.find(f => f.state === 'carried');
+  u.pole.visible = u.cloth.visible = !!carried; if (carried) u.cloth.material.color.setHex(carried.color);
+}
 
 // ------------------------------------------------------------------ HUD helpers
 function toast(text) {
@@ -611,7 +750,7 @@ function meetMilo() {
   say('Milo', 'The Treehouse is our base. Fill up there, bank your caps, pick a target on the war map.', 4.5);
   say('Milo', 'Pools are everything. Hold a pool and you can fight around it. Lose it and you walk home dry.', 4.5);
   say('Milo', 'Three tribes, three flags. Plant all three in our yard and the city is ours. They will come to take them back.', 5);
-  player.hasGun = true; player.water = player.tank; gun.visible = true; sfx('pick');
+  player.hasGun = true; player.water = player.tank; sfx('pick');
   toast('Got a squirter. Hold click to spray.');
 }
 
@@ -737,7 +876,17 @@ $('start-skip').onclick = () => enterCity(true);
 
 // ------------------------------------------------------------------ player actions
 const fwd = V3(), eye = V3();
-function aim() { camera.getWorldDirection(fwd); eye.copy(camera.position); }
+// Aim where the crosshair points, but shoot from the squirter in your hand.
+let aimDist = 20;
+function aim() {
+  camera.getWorldDirection(fwd);
+  const h = world.raycast(camera.position, fwd, 45, 0.12);
+  aimDist = h ? Math.max(h.dist, CAM.cur + 1.5) : 45;
+  const tx = camera.position.x + fwd.x * aimDist, ty = camera.position.y + fwd.y * aimDist, tz = camera.position.z + fwd.z * aimDist;
+  const p = player.pos, sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
+  eye.set(p.x - sy * 0.4 + cy * 0.28, p.y + 0.95, p.z - cy * 0.4 - sy * 0.28);
+  fwd.set(tx - eye.x, ty - eye.y, tz - eye.z); aimDist = fwd.length(); fwd.normalize();
+}
 let fireAcc = 0, emptyT = 0;
 function squirt(dt) {
   if (!input.fire && !input.keys.has('KeyF')) { fireAcc = 0; return; }
@@ -746,14 +895,13 @@ function squirt(dt) {
   if (player.water <= 0) { if ((emptyT -= dt) <= 0) { emptyT = 0.4; sfx('empty'); toast('Tank\'s empty. Find a kiddie pool.'); } return; }
   fireAcc += dt * 13;
   aim();
-  const speed = player.pump ? 30 : 23;
+  const speed = player.pump ? 30 : 23, lift = 0.5 * WATER_GRAV * Math.min(aimDist, 18) / speed; // lob it so it lands on the crosshair
   while (fireAcc >= 1 && player.water > 0) {
     fireAcc -= 1; player.water -= 1;
-    const s = 0.9, r = 0.22;
-    fx.spawn(eye.x + fwd.x * 0.5 - fwd.z * r, eye.y - 0.16 + fwd.y * 0.5, eye.z + fwd.z * 0.5 + fwd.x * r,
-      fwd.x * speed + player.vel.x + (Math.random() - 0.5) * s, fwd.y * speed + 1.2 + (Math.random() - 0.5) * s, fwd.z * speed + player.vel.z + (Math.random() - 0.5) * s,
+    const s = 0.9;
+    fx.spawn(eye.x + fwd.x * 0.3, eye.y + fwd.y * 0.3, eye.z + fwd.z * 0.3,
+      fwd.x * speed + (Math.random() - 0.5) * s, fwd.y * speed + lift + (Math.random() - 0.5) * s, fwd.z * speed + (Math.random() - 0.5) * s,
       1.7, 0x5fb8ff, 0.13, 1, 0);
-    gun.position.z = -0.4;
     sfx('squirt');
   }
 }
@@ -844,10 +992,7 @@ function updatePlayer(dt) {
       }
     }
   }
-  camera.position.set(p.x, p.y + 1.25, p.z);
-  camera.rotation.set(player.pitch, player.yaw, 0);
-  gun.position.z += (-0.45 - gun.position.z) * Math.min(1, dt * 12);
-  gun.position.y = -0.2 + Math.sin(game.time * 9) * 0.008 * Math.min(1, Math.hypot(player.vel.x, player.vel.z));
+  updateCamera(dt);
 }
 
 function updateHud() {
@@ -893,7 +1038,8 @@ function step(dt) {
   for (const a of game.actors) if (a !== player) { a.update(dt); gone ||= a.dead; }
   if (gone) game.actors = game.actors.filter(a => !a.dead);
   updatePools(dt); director(dt); rebuild(dt);
-  towerMesh.visible = game.mode !== 'intro'; // the backyard is an ordinary backyard until you crawl in
+  towerMesh.visible = skyline.visible = game.mode !== 'intro';
+  if (game.mode === 'menu') avatar.visible = false; // the backyard is an ordinary backyard until you crawl in
   fx.update(dt);
   aimSun(game.mode === 'menu' ? PLACES.tree : camera.position);
   world.update(dt, camera.position, viewDist);
