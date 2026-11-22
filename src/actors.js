@@ -32,6 +32,13 @@ const matCache = new Map();
 const mat = c => { if (!matCache.has(c)) matCache.set(c, new THREE.MeshLambertMaterial({ color: c })); return matCache.get(c); };
 const unit = new THREE.BoxGeometry(1, 1, 1);
 const cone = new THREE.ConeGeometry(0.5, 1, 4);
+const ball = new THREE.SphereGeometry(0.5, 14, 10);
+const tube = new THREE.CylinderGeometry(0.5, 0.5, 1, 10);
+const torso = new THREE.CylinderGeometry(0.4, 0.5, 1, 12);
+function part(parent, geo, w, h, d, x, y, z, color) {
+  const m = new THREE.Mesh(geo, typeof color === 'number' ? mat(color) : color);
+  m.scale.set(w, h, d); m.position.set(x, y, z); parent.add(m); return m;
+}
 function box(parent, w, h, d, x, y, z, color) {
   const m = new THREE.Mesh(unit, typeof color === 'number' ? mat(color) : color);
   m.scale.set(w, h, d); m.position.set(x, y, z); parent.add(m); return m;
@@ -43,20 +50,21 @@ function spike(parent, s, x, y, z, color, rx = 0) {
 const SKINS = [0xf2c9a0, 0xd9a273, 0xa8724a, 0x7a4e2e, 0xf7d9b8];
 const KRAFT = 0xc9a26b;
 
-// A kid is a handful of boxes. Local -z is forward.
+// Kids are soft and round; only their costumes are made of boxes. Local -z is forward.
 export function makeKid({ shirt = 0x4f7fd9, pants = 0x3b4a6b, costume = 'none', scale = 1, gun = true }) {
   const g = new THREE.Group();
   const skin = SKINS[Math.floor(Math.random() * SKINS.length)];
   const bodyMat = new THREE.MeshLambertMaterial({ color: shirt });
   const legL = new THREE.Group(), legR = new THREE.Group(), armL = new THREE.Group(), armR = new THREE.Group();
   legL.position.set(-0.11, 0.4, 0); legR.position.set(0.11, 0.4, 0);
-  box(legL, 0.16, 0.4, 0.18, 0, -0.2, 0, pants); box(legR, 0.16, 0.4, 0.18, 0, -0.2, 0, pants);
-  box(g, 0.44, 0.46, 0.26, 0, 0.63, 0, bodyMat);
+  part(legL, tube, 0.17, 0.4, 0.17, 0, -0.2, 0, pants); part(legR, tube, 0.17, 0.4, 0.17, 0, -0.2, 0, pants);
+  part(g, torso, 0.46, 0.46, 0.34, 0, 0.63, 0, bodyMat);
   armL.position.set(-0.29, 0.82, 0); armR.position.set(0.29, 0.82, 0);
-  box(armL, 0.12, 0.4, 0.14, 0, -0.18, 0, bodyMat); box(armR, 0.12, 0.4, 0.14, 0, -0.18, 0, bodyMat);
+  part(armL, tube, 0.13, 0.4, 0.13, 0, -0.18, 0, bodyMat); part(armR, tube, 0.13, 0.4, 0.13, 0, -0.18, 0, bodyMat);
+  part(armL, ball, 0.13, 0.13, 0.13, 0, -0.4, 0, skin); part(armR, ball, 0.13, 0.13, 0.13, 0, -0.4, 0, skin);
   const head = new THREE.Group(); head.position.set(0, 1.05, 0);
-  box(head, 0.36, 0.36, 0.36, 0, 0, 0, skin);
-  box(head, 0.06, 0.07, 0.02, -0.09, 0.03, -0.19, 0x1c1c1c); box(head, 0.06, 0.07, 0.02, 0.09, 0.03, -0.19, 0x1c1c1c);
+  part(head, ball, 0.42, 0.4, 0.42, 0, 0.02, 0, skin);
+  part(head, ball, 0.06, 0.08, 0.04, -0.09, 0.04, -0.195, 0x1c1c1c); part(head, ball, 0.06, 0.08, 0.04, 0.09, 0.04, -0.195, 0x1c1c1c);
   if (gun) {
     armR.rotation.x = 1.35;
     box(armR, 0.09, 0.3, 0.12, 0, -0.42, 0.06, 0x35c46a); box(armR, 0.1, 0.12, 0.16, 0, -0.34, 0.16, 0xff8a2a);
@@ -136,6 +144,7 @@ class Actor {
     this.r = r; this.h = h; this.onGround = false; this.blocked = false;
     this.yaw = Math.random() * 6.28; this.walk = 0; this.out = 0; this.wet = 0;
     this.home = { x, z }; this.goal = null; this.goalT = 0; this.stuck = 0;
+    group.traverse(o => { if (o.isMesh) o.castShadow = true; });
     game.scene.add(group);
   }
   targetable() { return this.out <= 0; }

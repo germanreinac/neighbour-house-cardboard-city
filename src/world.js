@@ -12,10 +12,9 @@ const SOLID_COLORS = {
   [T.WOOD]: 0xa9743f, [T.WALL]: 0xe6dcc6, [T.FENCE]: 0xb08a5c, [T.LEAF]: 0x4f8f4a,
   [T.DOOR]: 0x7a3f2a, [T.TRUNK]: 0x5c3d24, [T.ROOF]: 0x8c4a3c,
 };
-const CARD_TONES = [0xc9a26b, 0xbd945c, 0xd4b07a, 0xb5895a, 0xcfa870].map(c => new THREE.Color(c));
-const EDGE_TONES = [0x9c7a4c, 0x8f6f45, 0xa58352].map(c => new THREE.Color(c));
+const DRY = new THREE.Color().setRGB(1, 1, 1), EDGE_TONE = new THREE.Color().setRGB(0.6, 0.57, 0.55);
 const CLUTTER_TONES = [0xd96a4f, 0x4f7fd9, 0xe8c74a, 0x6b6b7a, 0x58a56e, 0xd9d2c4, 0x9a5fc4].map(c => new THREE.Color(c));
-const SOGGY = new THREE.Color(0x4a3524);
+const SOGGY = new THREE.Color().setRGB(0.3, 0.26, 0.27); // multiplies the box skin
 
 const CH = 16; // chunk size in x and z
 const CX = SX / CH, CZ = SZ / CH;
@@ -30,16 +29,63 @@ export function mulberry32(a) {
 }
 const hash = i => { let h = Math.imul(i ^ 0x9e3779b9, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); return (h ^ h >>> 16) >>> 0; };
 
-function boxTexture() {
-  const c = document.createElement('canvas'); c.width = c.height = 64;
-  const g = c.getContext('2d');
-  g.fillStyle = '#fff'; g.fillRect(0, 0, 64, 64);
-  g.fillStyle = 'rgba(120,90,60,0.10)';
-  for (let x = 3; x < 64; x += 5) g.fillRect(x, 0, 1, 64); // corrugation
-  g.strokeStyle = 'rgba(70,45,25,0.55)'; g.lineWidth = 3; g.strokeRect(1.5, 1.5, 61, 61);
-  g.fillStyle = 'rgba(255,240,210,0.55)'; g.fillRect(0, 27, 64, 9); // packing tape
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
-  return t;
+// Cardboard is drawn as big taped boxes that span several grid cells, so a wall reads as
+// a stack of fridge boxes rather than a grid of cubes. The pattern lives in world space.
+const SKIN = /* glsl */`
+float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+vec3 cardSkin(vec3 wp, vec3 n){
+  bool top = abs(n.y) > 0.5; bool xs = abs(n.x) > 0.5;
+  vec2 uv = top ? wp.xz : vec2(xs ? wp.z : wp.x, wp.y);
+  vec2 B = top ? vec2(3.0, 3.0) : vec2(3.0, 2.0);
+  if (!top) uv.x += mod(floor(uv.y / B.y), 2.0) * 1.5 + (xs ? 0.7 : 0.0);
+  vec2 id = floor(uv / B) + (xs ? 17.0 : 0.0); vec2 f = fract(uv / B); vec2 m = f * B;
+  vec2 d = min(f, 1.0 - f) * B; float e = min(d.x, d.y);
+  float r = h21(id);
+  vec3 col = vec3(0.584, 0.361, 0.147) * mix(0.78, 1.16, r);
+  col = mix(col, col * vec3(1.08, 0.96, 0.8), h21(id + 3.1));
+  float aa = fwidth(e) + 0.004;
+  col *= mix(0.42, 1.0, smoothstep(0.02, 0.035 + aa, e));
+  col *= mix(0.86, 1.0, smoothstep(0.0, 0.4, e));
+  col *= 1.0 + 0.035 * sin(uv.x * 40.0) * (1.0 - smoothstep(0.4, 1.4, fwidth(uv.x) * 40.0));
+  if (top) {
+    col *= mix(0.55, 1.0, smoothstep(0.015, 0.05 + aa, abs(m.x - 1.5)));
+    col = mix(col, vec3(0.74, 0.6, 0.38), 0.75 * step(abs(m.y - 1.5), 0.13) * step(0.35, r));
+  } else {
+    col = mix(col, vec3(0.74, 0.6, 0.38), 0.75 * step(abs(m.x - 1.5), 0.13) * step(1.3, m.y) * step(0.3, r));
+    float r2 = h21(id + 9.7);
+    if (r2 > 0.8) {
+      vec2 q = m - vec2(0.4, 0.35);
+      if (q.x > 0.0 && q.x < 0.8 && q.y > 0.0 && q.y < 0.5) {
+        col = vec3(0.85, 0.82, 0.74);
+        col = mix(col, vec3(0.2), 0.6 * step(0.5, fract(q.y * 8.0)) * step(0.08, q.x) * step(q.x, 0.62));
+      }
+    } else if (r2 < 0.14) {
+      for (int i = 0; i < 2; i++) {
+        vec2 q = m - vec2(2.2 + float(i) * 0.36, 0.4);
+        float stem = step(abs(q.x), 0.04) * step(0.0, q.y) * step(q.y, 0.36);
+        float head = step(0.36, q.y) * step(q.y, 0.58) * step(abs(q.x), (0.58 - q.y) * 0.65);
+        col = mix(col, col * 0.3, max(stem, head));
+      }
+    }
+  }
+  return col;
+}`;
+function cardboardMaterial() {
+  const mat = new THREE.MeshLambertMaterial();
+  mat.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vONrm;')
+      .replace('#include <fog_vertex>', `#include <fog_vertex>
+        vONrm = normal; vec4 wpC = vec4(transformed, 1.0);
+        #ifdef USE_INSTANCING
+          wpC = instanceMatrix * wpC;
+        #endif
+        vWPos = (modelMatrix * wpC).xyz;`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vONrm;\n' + SKIN)
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= cardSkin(vWPos, vONrm);');
+  };
+  return mat;
 }
 
 export class World {
@@ -49,7 +95,7 @@ export class World {
     this.wet = new Float32Array(SX * SY * SZ);
     this.wetSet = new Set();
     this.geo = new THREE.BoxGeometry(1, 1, 1);
-    this.cardMat = new THREE.MeshLambertMaterial({ map: boxTexture() });
+    this.cardMat = cardboardMaterial();
     this.solidMat = new THREE.MeshLambertMaterial();
     this.chunks = [];
     for (let i = 0; i < CX * CZ; i++) this.chunks.push({ dirty: true, card: null, solid: null });
@@ -158,13 +204,13 @@ export class World {
       m.makeTranslation(x + 0.5, y + 0.5, z + 0.5);
       const h = hash(i);
       if (t === T.CARD) {
-        c.copy(CARD_TONES[h % CARD_TONES.length]).lerp(SOGGY, Math.min(1, this.wet[i]));
+        c.copy(DRY).lerp(SOGGY, Math.min(1, this.wet[i]));
         ch.card.setMatrixAt(a, m); ch.card.setColorAt(a++, c);
       } else if (t === T.EDGE) {
-        ch.card.setMatrixAt(a, m); ch.card.setColorAt(a++, EDGE_TONES[h % EDGE_TONES.length]);
+        ch.card.setMatrixAt(a, m); ch.card.setColorAt(a++, EDGE_TONE);
       } else {
         if (t === T.CLUTTER) c.copy(CLUTTER_TONES[h % CLUTTER_TONES.length]);
-        else { c.setHex(SOLID_COLORS[t]); c.multiplyScalar(0.92 + (h % 16) / 100); }
+        else { c.setHex(SOLID_COLORS[t]); if (t === T.WOOD || t === T.FENCE) c.multiplyScalar(0.86 + (hash(t === T.WOOD ? z : x + z) % 20) / 100); }
         ch.solid.setMatrixAt(b, m); ch.solid.setColorAt(b++, c);
       }
     }
@@ -181,7 +227,7 @@ export class World {
     if (n === 0) return null;
     const cap = Math.ceil(n * 1.3) + 32;
     mesh = new THREE.InstancedMesh(this.geo, mat, cap);
-    mesh.userData.cap = cap; mesh.count = n;
+    mesh.userData.cap = cap; mesh.count = n; mesh.castShadow = mesh.receiveShadow = true;
     this.scene.add(mesh);
     return mesh;
   }
@@ -220,7 +266,7 @@ export function generate(world, seed = 7) {
       if (x === x0 || x === x1 || z === z0 || z === z1) set(x, y, z, t);
     if (roofT) fill(x0, h, z0, x1, h, z1, roofT);
   };
-  const loot = []; // {x,y,z,kind}
+  const loot = [], flaps = [], signs = []; // decoration hangs off a support cell and goes when it does
 
   // --- city boundary: looming stacks you can't melt or see past
   for (let i = 0; i < CITY; i++) for (let k = 0; k < 2; k++) {
@@ -257,28 +303,24 @@ export function generate(world, seed = 7) {
     for (const [px, pz] of [[57, 57], [71, 57], [57, 71], [71, 71]]) fill(px, 0, pz, px, 9, pz, T.WOOD);
     for (let i = 0; i < 6; i++) fill(77 - i, 0, 63, 77 - i, i, 65, T.WOOD); // stairs up the east side
     fill(60, 7, 59, 60, 7, 62, T.WOOD);                       // market counter
-    for (let y = 10; y <= 13; y++) {                          // canopy
-      const r = y === 13 ? 4 : y === 10 ? 6 : 8;
-      for (let z = cz - r; z <= cz + r; z++) for (let x = cx - r; x <= cx + r; x++)
-        if ((x - cx) ** 2 + (z - cz) ** 2 <= r * r + 2) set(x, y, z, T.LEAF);
-    }
   }
 
   // --- tribe forts
   for (const f of PLACES.forts) {
     const { x: cx, z: cz } = f;
-    shell(cx - 10, cz - 10, cx + 10, cz + 10, 4, T.CARD);
+    shell(cx - 10, cz - 10, cx + 10, cz + 10, 5, T.CARD);
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]])
-      shell(cx + sx * 10 - 1, cz + sz * 10 - 1, cx + sx * 10 + 1, cz + sz * 10 + 1, 7, T.CARD, T.CARD);
+      shell(cx + sx * 10 - 1, cz + sz * 10 - 1, cx + sx * 10 + 1, cz + sz * 10 + 1, 9, T.CARD, T.CARD);
     // gate on the side facing the middle of the city
     const gx = cx < 64 ? cx + 10 : cx - 10;
     fill(gx, 0, cz - 1, gx, 2, cz + 1, T.AIR);
+    signs.push({ x: cx < 64 ? gx + 1 : gx, y: 3.9, z: cz + 0.5, dx: cx < 64 ? 1 : -1, dz: 0, sup: [gx, 3, cz], text: f.name.toUpperCase(), big: true });
     shell(cx - 2, cz - 2, cx + 2, cz + 2, 3, T.CARD, T.CARD); // sealed keep holding the flag
   }
 
   // --- buildings: hollow boxes, some with doors, some you have to melt into
   for (let n = 0; n < 900; n++) {
-    const w = ri(4, 9), d = ri(4, 9), h = ri(2, 6);
+    const w = ri(4, 10), d = ri(4, 10), h = ri(3, 8);
     const x0 = ri(3, CITY - 4 - w), z0 = ri(3, CITY - 4 - d), x1 = x0 + w - 1, z1 = z0 + d - 1;
     if (!free(x0 - 2, z0 - 2, x1 + 2, z1 + 2)) continue;
     reserve(x0, z0, x1, z1);
@@ -301,6 +343,15 @@ export function generate(world, seed = 7) {
       for (let y = h + 1; y <= hh; y++) for (let z = z0 + 1; z <= z0 + 3; z++) for (let x = x0 + 1; x <= x0 + 3; x++)
         if (y === hh || x === x0 + 1 || x === x0 + 3 || z === z0 + 1 || z === z0 + 3) set(x, y, z, T.CARD);
     }
+    const top = roofed ? h + 1 : h;
+    for (let side = 0; side < 4; side++) {
+      const horiz = side < 2, near = side % 2 === 0;
+      const fx = horiz ? (x0 + x1 + 1) / 2 : (near ? x0 : x1 + 1), fz = horiz ? (near ? z0 : z1 + 1) : (z0 + z1 + 1) / 2;
+      const dx = horiz ? 0 : (near ? -1 : 1), dz = horiz ? (near ? -1 : 1) : 0;
+      const sx = horiz ? Math.floor(fx) : (near ? x0 : x1), sz = horiz ? (near ? z0 : z1) : Math.floor(fz);
+      if (R() < 0.45) flaps.push({ x: fx, y: top, z: fz, len: (horiz ? w : d) - 0.3, dx, dz, a: R() * 1.5 - 0.45, sup: [sx, top - 1, sz] });
+      else if (R() < 0.22) signs.push({ x: fx, y: 1.5 + R() * 0.5, z: fz, dx, dz, sup: [sx, 1, sz] });
+    }
     if (R() < 0.7) {
       const k = R();
       loot.push({ x: (x0 + x1 + 1) / 2, y: 0, z: (z0 + z1 + 1) / 2, kind: k < 0.6 ? 'caps' : k < 0.8 ? 'balloon' : 'bottle' });
@@ -310,7 +361,7 @@ export function generate(world, seed = 7) {
 
   // --- long walls that cut streets off (melt through or go around)
   for (let n = 0; n < 40; n++) {
-    const horiz = R() < 0.5, len = ri(8, 22), h = ri(2, 4);
+    const horiz = R() < 0.5, len = ri(8, 22), h = ri(2, 5);
     const x0 = ri(4, CITY - 5 - (horiz ? len : 0)), z0 = ri(4, CITY - 5 - (horiz ? 0 : len));
     const x1 = horiz ? x0 + len : x0, z1 = horiz ? z0 : z0 + len;
     for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++)
@@ -358,5 +409,5 @@ export function generate(world, seed = 7) {
     fill(63, 0, 177, 65, 2, 183, T.CARD); fill(64, 0, 178, 64, 1, 183, T.AIR); // the big box with the hole
     fill(62, 0, 184, 62, 0, 184, T.CARD); fill(67, 0, 185, 67, 1, 185, T.CARD); fill(60, 0, 186, 60, 0, 186, T.CARD);
   }
-  return { loot };
+  return { loot, flaps, signs };
 }

@@ -16,16 +16,38 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(74, 1, 0.08, 200);
 camera.rotation.order = 'YXZ';
 scene.add(camera);
-scene.add(new THREE.HemisphereLight(0xfff4de, 0x8d7c62, 1.5));
-const sun = new THREE.DirectionalLight(0xffffff, 1.5); sun.position.set(0.5, 1, 0.3); scene.add(sun);
+// Late-afternoon sun with real shadows: boxes need shade to read as a city rather than a grid.
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+scene.add(new THREE.HemisphereLight(0xfff1d6, 0x9a8468, 1.2));
+const sun = new THREE.DirectionalLight(0xfff0d8, 2.3);
+const SUN_DIR = V3(0.55, 0.8, 0.38).normalize();
+sun.castShadow = true; sun.shadow.mapSize.set(TOUCH ? 1024 : 2048, TOUCH ? 1024 : 2048);
+Object.assign(sun.shadow.camera, { left: -44, right: 44, top: 44, bottom: -44, near: 1, far: 150 });
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.05;
+scene.add(sun, sun.target);
+function aimSun(c) {
+  sun.target.position.set(Math.round(c.x / 2) * 2, 0, Math.round(c.z / 2) * 2);
+  sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 70);
+}
 scene.fog = new THREE.Fog(0xdcc096, 10, 50);
 scene.background = new THREE.Color(0xdcc096);
 
-const flat = (w, d, x, z, color, y = 0) => {
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshLambertMaterial({ color }));
-  m.rotation.x = -Math.PI / 2; m.position.set(x, y, z); scene.add(m); return m;
+function lawnTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 512;
+  const g = c.getContext('2d'); let sd = 5; const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+  g.fillStyle = '#7f9f58'; g.fillRect(0, 0, 512, 512);
+  const blot = (col, n, r0, r1) => { g.fillStyle = col; for (let i = 0; i < n; i++) { const x = rnd() * 512, y = rnd() * 512, r = r0 + rnd() * (r1 - r0);
+    for (const ox of [-512, 0, 512]) for (const oy of [-512, 0, 512]) { g.beginPath(); g.ellipse(x + ox, y + oy, r, r * (0.5 + rnd() * 0.5), rnd() * 3, 0, 7); g.fill(); } } };
+  blot('rgba(104,138,70,0.5)', 40, 30, 80); blot('rgba(150,172,96,0.45)', 40, 20, 70); blot('rgba(176,160,104,0.4)', 14, 20, 50); // worn, dry patches
+  blot('rgba(70,104,52,0.5)', 500, 1, 3);
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(22, 22); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+}
+const flat = (w, d, x, z, color, y = 0, map = null) => {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshLambertMaterial({ color, map }));
+  m.rotation.x = -Math.PI / 2; m.position.set(x, y, z); m.receiveShadow = true; scene.add(m); return m;
 };
-flat(500, 500, 64, 112, 0x86a85f);
+flat(500, 500, 64, 112, 0xffffff, 0, lawnTexture());
 flat(15, 15, 64.5, 204.5, 0xb89468, 0.01);  // house floor
 flat(3, 11, 64.5, 218.5, 0xbdb7ab, 0.01);   // front path
 
@@ -135,7 +157,7 @@ function sfx(name, pos) {
 
 // ------------------------------------------------------------------ world
 const world = new World(scene);
-const { loot } = generate(world);
+const { loot, flaps, signs } = generate(world);
 const fx = new Fx();
 const soggyBlue = new THREE.Color(0x27356b);
 
@@ -207,7 +229,76 @@ world.onBreak = (x, y, z, byPlayer) => {
   fx.burst(x + 0.5, y + 0.5, z + 0.5, 7, 0x6b4a2c, 4, 0.16);
   sfx('crumble', V3(x, y, z));
   if (byPlayer && Math.random() < 0.4) player.card++;
+  const hung = props.get(world.idx(x, y, z));
+  if (hung) { hung.forEach(fn => fn()); props.delete(world.idx(x, y, z)); }
 };
+
+// ------------------------------------------------------------------ decoration that breaks up the grid
+const props = new Map(); // support cell -> things to remove when that cell melts
+const hang = (sup, fn) => { const i = world.idx(...sup); if (!props.has(i)) props.set(i, []); props.get(i).push(fn); };
+const kraft = new THREE.MeshLambertMaterial({ color: 0xffffff });
+const dummy = new THREE.Object3D(); dummy.rotation.order = 'YXZ';
+const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+const tone = new THREE.Color();
+{ // open box flaps along the tops of buildings
+  const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), kraft, flaps.length);
+  mesh.castShadow = mesh.receiveShadow = true; mesh.frustumCulled = false;
+  flaps.forEach((f, i) => {
+    const depth = 0.75 + (i % 5) * 0.12;
+    dummy.rotation.set(-f.a, Math.atan2(f.dx, f.dz), 0);
+    dummy.position.set(f.x + f.dx * Math.cos(f.a) * depth / 2, f.y + Math.sin(f.a) * depth / 2, f.z + f.dz * Math.cos(f.a) * depth / 2);
+    dummy.scale.set(f.len, 0.05, depth); dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix); mesh.setColorAt(i, tone.setHex([0xc9a26b, 0xb98f58, 0xd3ae76][i % 3]));
+    hang(f.sup, () => { mesh.setMatrixAt(i, ZERO); mesh.instanceMatrix.needsUpdate = true; });
+  });
+  scene.add(mesh);
+}
+{ // flattened boxes trampled into the lawn, at every angle
+  const N = 420, mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), kraft, N);
+  mesh.receiveShadow = true; mesh.frustumCulled = false;
+  let sd = 11; const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < N; i++) {
+    dummy.rotation.set(0, rnd() * 3.14, 0); dummy.position.set(4 + rnd() * 120, 0.012 + i * 0.00004, 4 + rnd() * 120);
+    dummy.scale.set(1.2 + rnd() * 2.4, 0.02, 0.9 + rnd() * 1.6); dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix); mesh.setColorAt(i, tone.setHex([0xb89460, 0xa98552, 0xc4a06c][i % 3]));
+  }
+  scene.add(mesh);
+}
+{ // the tree's canopy: soft blobs, the one thing here that isn't a box
+  const leaf = new THREE.MeshLambertMaterial({ color: 0x4f8f4a, flatShading: true }), geo = new THREE.IcosahedronGeometry(1, 1);
+  for (const [x, y, z, r] of [[64.5, 12.5, 64.5, 8], [58, 11.5, 61, 5.5], [71, 11.8, 62, 5.5], [62, 11.5, 71, 5.5], [69, 12, 70, 5], [64.5, 15, 64.5, 5.5]]) {
+    const m = new THREE.Mesh(geo, leaf); m.position.set(x, y, z); m.scale.set(r, r * 0.55, r); m.rotation.y = x; m.castShadow = true; scene.add(m);
+  }
+}
+{ // hand-lettered signs
+  const WORDS = ['KEEP OUT', 'NO GROWN-UPS', 'SECRET HQ', 'PASSWORD?', 'MY HOUSE', 'BANK', 'JAIL', 'NO GEESE', 'HOTEL', 'DO NOT MELT', 'SNACKS', 'LAB'];
+  const INK = ['#c23b2e', '#2a2018', '#2f5fb5', '#2a7a45'];
+  const cache = new Map();
+  const signMat = (text, big) => {
+    if (cache.has(text)) return cache.get(text);
+    const c = document.createElement('canvas'); c.width = 512; c.height = 192;
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+    const draw = () => {
+      const g = c.getContext('2d'); g.fillStyle = big ? '#f4ead2' : '#e9dcc0'; g.fillRect(0, 0, 512, 192);
+      g.strokeStyle = 'rgba(42,32,24,.5)'; g.lineWidth = 6; g.strokeRect(3, 3, 506, 186);
+      g.fillStyle = INK[text.length % INK.length]; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = '84px "Permanent Marker", "Comic Sans MS", sans-serif';
+      g.translate(256, 100); g.rotate((text.length % 5 - 2) * 0.025); g.fillText(text, 0, 0, 470); g.setTransform(1, 0, 0, 1, 0, 0);
+      tex.needsUpdate = true;
+    };
+    draw(); document.fonts?.load('84px "Permanent Marker"').then(draw).catch(() => {});
+    const m = new THREE.MeshLambertMaterial({ map: tex }); cache.set(text, m); return m;
+  };
+  const geo = new THREE.PlaneGeometry(1, 1);
+  signs.forEach((sg, i) => {
+    if (world.get(...sg.sup) !== T.CARD) return;
+    const text = sg.text || WORDS[i % WORDS.length], w = sg.big ? 3.4 : 1.7;
+    const m = new THREE.Mesh(geo, signMat(text, sg.big));
+    m.scale.set(w, w * 0.375, 1); m.position.set(sg.x + sg.dx * 0.03, sg.y, sg.z + sg.dz * 0.03);
+    m.rotation.set(0, Math.atan2(sg.dx, sg.dz), (i % 7 - 3) * (sg.big ? 0.012 : 0.03), 'YXZ'); m.receiveShadow = true;
+    scene.add(m); hang(sg.sup, () => { m.visible = false; });
+  });
+}
 
 // ------------------------------------------------------------------ things in the world
 const capGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.05, 8);
@@ -243,7 +334,7 @@ PLACES.forts.forEach((f, i) => {
   const mesh = makeFlag(f.color); mesh.position.set(f.x + 0.5, 0, f.z + 0.5);
   game.flags.push({ ...f, mesh, state: 'home', home: V3(f.x + 0.5, 0, f.z + 0.5), deck: DECK[i] });
   // banners on the fort towers so you can tell whose turf it is
-  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { const b = makeFlag(f.color); b.position.set(f.x + sx * 10 + 0.5, 8, f.z + sz * 10 + 0.5); }
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { const b = makeFlag(f.color); b.position.set(f.x + sx * 10 + 0.5, 10, f.z + sz * 10 + 0.5); }
   $('flags').children[i].style.setProperty('--c', '#' + f.color.toString(16).padStart(6, '0'));
 });
 
@@ -578,6 +669,7 @@ function step(dt) {
   } else if (!game.marketOpen) { updatePlayer(dt); squirt(dt); }
   for (const a of game.actors) if (a !== player) a.update(dt);
   fx.update(dt);
+  aimSun(game.mode === 'menu' ? PLACES.tree : camera.position);
   world.update(dt, camera.position, viewDist);
   updateSubs(dt);
   updateHud();
