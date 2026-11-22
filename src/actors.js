@@ -128,7 +128,7 @@ function bubble(text) {
   x.beginPath(); x.roundRect(128 - w / 2, 6, w, 52, 14); x.fill(); x.stroke();
   x.fillStyle = '#2a2018'; x.fillText(text, 128, 33, 236);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
-  const m = new THREE.SpriteMaterial({ map: t, depthTest: false, fog: false });
+  const m = new THREE.SpriteMaterial({ map: t, fog: false });
   bubbleCache.set(text, m); return m;
 }
 
@@ -193,12 +193,65 @@ class Actor {
   }
 }
 
+// ---- pathfinding on the ground plan. Open ground is cheap, cardboard is passable but dear
+// (a kid will melt through it), everything else is a wall.
+const N = 128;
+const gArr = new Float32Array(N * N), came = new Int32Array(N * N), seen = new Uint32Array(N * N), shut = new Uint32Array(N * N);
+let run = 0;
+function cellCost(world, x, z) {
+  if (x < 2 || z < 2 || x > N - 3 || z > N - 3) return 0;
+  const a = world.get(x, 0, z), b = world.get(x, 1, z);
+  if (!a && !b) return 1;
+  return (a === 0 || a === 1) && (b === 0 || b === 1) ? 7 : 0;
+}
+export function findPath(world, sx, sz, gx, gz) {
+  const cl = v => Math.min(N - 3, Math.max(2, Math.floor(v)));
+  sx = cl(sx); sz = cl(sz); gx = cl(gx); gz = cl(gz);
+  const start = sx + N * sz, goal = gx + N * gz;
+  if (start === goal) return [];
+  run++;
+  const hf = [], hi = []; // binary heap of (f, cell)
+  const push = (f, i) => {
+    let c = hf.length; hf.push(f); hi.push(i);
+    while (c > 0) { const p = (c - 1) >> 1; if (hf[p] <= f) break; hf[c] = hf[p]; hi[c] = hi[p]; c = p; }
+    hf[c] = f; hi[c] = i;
+  };
+  const pop = () => {
+    const top = hi[0], f = hf.pop(), i = hi.pop(), n = hf.length;
+    if (n) { let c = 0; for (;;) { let k = c * 2 + 1; if (k >= n) break; if (k + 1 < n && hf[k + 1] < hf[k]) k++; if (hf[k] >= f) break; hf[c] = hf[k]; hi[c] = hi[k]; c = k; } hf[c] = f; hi[c] = i; }
+    return top;
+  };
+  gArr[start] = 0; seen[start] = run; came[start] = -1; push(0, start);
+  let found = false;
+  for (let exp = 0; hf.length && exp < 9000;) {
+    const cur = pop();
+    if (cur === goal) { found = true; break; }
+    if (shut[cur] === run) continue;
+    shut[cur] = run; exp++;
+    const cx = cur % N, cz = (cur / N) | 0;
+    for (let k = 0; k < 4; k++) {
+      const nx = cx + (k === 0) - (k === 1), nz = cz + (k === 2) - (k === 3), ni = nx + N * nz;
+      const c = ni === goal ? Math.max(1, cellCost(world, nx, nz)) : cellCost(world, nx, nz);
+      if (!c || shut[ni] === run) continue;
+      const ng = gArr[cur] + c;
+      if (seen[ni] !== run || ng < gArr[ni]) { gArr[ni] = ng; seen[ni] = run; came[ni] = cur; push(ng + Math.abs(nx - gx) + Math.abs(nz - gz), ni); }
+    }
+  }
+  if (!found) return null;
+  const out = [];
+  for (let c = goal; c !== start && c >= 0; c = came[c]) out.push({ x: (c % N) + 0.5, z: ((c / N) | 0) + 0.5 });
+  return out.reverse();
+}
+
+export const AMMO = 24;
 export class Kid extends Actor {
   constructor(game, o) {
     super(game, makeKid(o), o.x, o.z, 0.28, 1.25 * (o.scale || 1));
     this.team = o.team; this.still = !!o.still; this.name = o.name || '';
     this.think = Math.random(); this.target = null; this.cool = 1 + Math.random() * 2; this.burst = 0; this.burstT = 0;
     this.strafe = 1; this.chase = null;
+    this.base = { x: o.x, z: o.z }; this.avoid = 0; this.range = 9; // base: where you respawn. home: where you're posted.
+    this.ammo = AMMO; this.refillT = 0; this.path = null; this.pathGoal = null; this.pathT = 0; this.wp = 0; this.digT = 0; this.pause = 0;
     if (o.yaw !== undefined) this.yaw = o.yaw;
     this.group.position.copy(this.pos); this.group.rotation.y = this.yaw;
   }
@@ -218,26 +271,51 @@ export class Kid extends Actor {
     const dx = tx - ox, dz = tz - oz, dh = Math.max(0.5, Math.hypot(dx, dz)), vh = 16, t = dh / vh;
     const s = 1.3;
     this.game.fx.spawn(ox, oy, oz, dx / dh * vh + (Math.random() - 0.5) * s, (ty - oy) / t + 0.5 * WATER_GRAV * t + (Math.random() - 0.5) * s,
-      dz / dh * vh + (Math.random() - 0.5) * s, 1.6, 0x5fb8ff, 0.13, 1, this.team);
+      dz / dh * vh + (Math.random() - 0.5) * s, 1.6, 0x5fb8ff, 0.13, 3, this.team);
   }
-  hit(amount, byTeam) {
+  hit(amount, byTeam, byPlayer) {
     if (this.team < 0 || this.out > 0) return;
     this.wet += amount;
     if (Math.random() < 0.25) this.say(pick(OUCH), 1);
     if (this.wet >= 100) {
       this.say(pick(BYE), 2); this.out = 14; this.outAnim = 1.6; this.vel.set(0, 0, 0);
-      this.game.kidSoaked(this, byTeam);
+      this.game.kidSoaked(this, byPlayer);
     }
+  }
+  // Walk a path to (tx,tz), melting any cardboard on the way. Returns true on arrival.
+  travel(dt, tx, tz, speed) {
+    const g = this.game, w = g.world, p = this.pos;
+    this.pathT -= dt;
+    if (!this.path || this.pathT <= 0 || Math.hypot(tx - this.pathGoal.x, tz - this.pathGoal.z) > 3) {
+      this.path = findPath(w, p.x, p.z, tx, tz) || [{ x: tx, z: tz }];
+      this.wp = 0; this.pathGoal = { x: tx, z: tz }; this.pathT = 5 + Math.random() * 3; this.stuck = 0;
+    }
+    const n = this.path[this.wp];
+    if (!n) { this.go(0, 0, 0); return true; }
+    const dx = n.x - p.x, dz = n.z - p.z, d = Math.hypot(dx, dz);
+    if (d < 0.4) { this.wp++; return this.wp >= this.path.length; }
+    this.go(dx, dz, speed); this.face(dx, dz, dt, 8);
+    const cx = Math.floor(n.x), cz = Math.floor(n.z), low = w.get(cx, 0, cz) === 1, high = w.get(cx, 1, cz) === 1;
+    if (d < 1.7 && (low || high)) {
+      this.go(0, 0, 0);
+      if ((this.digT -= dt) <= 0) {
+        this.digT = 0.22;
+        if (g.nearPlayer(p, 48)) { this.shootAt(n.x, (low ? 0.5 : 1.5), n.z); g.sfx('squirt', p); }
+        else w.soak(cx, low ? 0 : 1, cz, 0.25, false);
+      }
+    } else if (this.blocked) { this.stuck += dt; if (this.stuck > 1.5) this.pathT = 0; }
+    else this.stuck = 0;
+    return false;
   }
   update(dt) {
     const g = this.game, u = this.group.userData;
     if (this.out > 0) {
       this.out -= dt; this.outAnim -= dt;
-      if (this.outAnim > 0) { this.group.scale.y = 0.7; this.finishStill(dt); }
+      if (this.outAnim > 0) { this.group.scale.y = 0.7; this.vel.x = this.vel.z = 0; this.finish(dt); }
       else this.group.visible = false;
       if (this.out <= 0) {
-        this.wet = 0; this.group.visible = true; this.group.scale.y = 1; this.target = null;
-        const s = g.freeSpot(this.home.x, this.home.z, 7); this.pos.set(s.x, 0, s.z);
+        this.wet = 0; this.ammo = AMMO; this.group.visible = true; this.group.scale.y = 1; this.target = null; this.path = null; this.goal = null;
+        const s = g.freeSpot(this.base.x, this.base.z, 7, this.avoid); this.pos.set(s.x, 0, s.z);
       }
       return;
     }
@@ -252,48 +330,45 @@ export class Kid extends Actor {
     this.think -= dt;
     if (this.think <= 0) {
       this.think = 0.3 + Math.random() * 0.25;
-      const had = this.target; this.target = this.findTarget();
+      const had = this.target; this.target = this.ammo > 0 ? this.findTarget() : null;
       if (this.target && !had && Math.random() < 0.5) this.say(pick(SEE));
       if (!this.target && had && had === g.player && had.targetable()) this.chase = { x: had.pos.x, z: had.pos.z, t: 6 };
     }
     const t = this.target, p = this.pos;
     this.cool -= dt;
-    if (t && t.targetable()) {
+    if (t && t.targetable() && this.ammo > 0) {
       const dx = t.pos.x - p.x, dz = t.pos.z - p.z, d = Math.hypot(dx, dz);
       this.face(dx, dz, dt);
       if (Math.random() < dt * 0.4) this.strafe = -this.strafe;
       if (d > 9) this.go(dx, dz, 3.3);
       else if (d < 4.5) this.go(-dx, -dz, 2.6);
       else this.go(-dz * this.strafe, dx * this.strafe, 2.2);
-      if (this.cool <= 0 && g.nearPlayer(p, 46)) { this.burst = 3; this.cool = 1.1 + Math.random() * 0.9; }
-      if (this.burst > 0 && (this.burstT -= dt) <= 0) { this.burst--; this.burstT = 0.1; this.shootAt(t.pos.x, t.pos.y + t.h * 0.6, t.pos.z); g.sfx('squirt', p); }
-      this.chase = null;
+      if (this.cool <= 0) { this.burst = 3; this.cool = 1.1 + Math.random() * 0.9; }
+      if (this.burst > 0 && (this.burstT -= dt) <= 0) {
+        this.burst--; this.burstT = 0.1; this.ammo--;
+        if (g.nearPlayer(p, 48)) { this.shootAt(t.pos.x, t.pos.y + t.h * 0.6, t.pos.z); g.sfx('squirt', p); }
+        else if (Math.random() < 0.45) t.hit(20, this.team, false); // fights you can't see are settled by dice
+        if (this.ammo <= 0) this.say('I\'M OUT!', 1.5);
+      }
+      this.chase = null; this.path = null;
+    } else if (this.ammo <= 0) {
+      // out of water: run for a pool your side holds, or all the way home
+      const r = g.refillSpot(this);
+      this.travel(dt, r.x, r.z, 3.4);
+      if (Math.hypot(r.x - p.x, r.z - p.z) < 2.8) { this.go(0, 0, 0); if ((this.refillT += dt) > r.secs) { this.ammo = AMMO; this.refillT = 0; this.path = null; } }
+    } else if (g.hunting(this.team)) {
+      this.travel(dt, g.player.pos.x, g.player.pos.z, 3.5); // someone has our flag
     } else if (this.chase) {
-      const dx = this.chase.x - p.x, dz = this.chase.z - p.z;
-      this.go(dx, dz, 3.3); this.face(dx, dz, dt);
-      if ((this.chase.t -= dt) <= 0 || Math.hypot(dx, dz) < 1.5) this.chase = null;
-      this.tunnel(dt);
-    } else {
-      this.wander(dt, 12, 2.5);
-      this.tunnel(dt);
+      if (this.travel(dt, this.chase.x, this.chase.z, 3.3) || (this.chase.t -= dt) <= 0) this.chase = null;
+    } else if (this.pause > 0) { this.pause -= dt; this.go(0, 0, 0); }
+    else {
+      if (!this.goal || (this.goalT -= dt) <= 0) { this.goal = g.freeSpot(this.home.x, this.home.z, this.range, this.home === this.base ? this.avoid : 0); this.goalT = 30; }
+      if (this.travel(dt, this.goal.x, this.goal.z, 2.6)) { this.goal = null; this.pause = 1 + Math.random() * 3; }
     }
     const sp = this.finish(dt);
     const sw = Math.sin(this.walk) * Math.min(1, sp / 2) * 0.7;
     u.legL.rotation.x = sw; u.legR.rotation.x = -sw; u.armL.rotation.x = -sw;
   }
-  // stuck against cardboard? melt a door through it.
-  tunnel(dt) {
-    if (!this.blocked) { this.stuck = Math.max(0, this.stuck - dt); return; }
-    this.stuck += dt;
-    if (this.stuck > 0.8) {
-      this.stuck = 0;
-      if (Math.random() < 0.5 && this.game.nearPlayer(this.pos, 46)) {
-        const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
-        for (let i = 0; i < 4; i++) this.shootAt(this.pos.x + fx * 1.2, this.pos.y + 0.3 + (i % 2), this.pos.z + fz * 1.2);
-      } else this.goalT = 0;
-    }
-  }
-  finishStill(dt) { this.vel.x = this.vel.z = 0; this.finish(dt); }
 }
 
 export class Animal extends Actor {

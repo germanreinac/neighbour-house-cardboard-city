@@ -7,6 +7,7 @@ export const CITY = 128; // city occupies z in [0, CITY)
 
 export const T = {
   AIR: 0, CARD: 1, WOOD: 2, WALL: 3, FENCE: 4, LEAF: 5, CLUTTER: 6, DOOR: 7, TRUNK: 8, EDGE: 9, ROOF: 10,
+  GHOST: 11, // solid but not drawn: the collision under the tall non-voxel towers
 };
 const SOLID_COLORS = {
   [T.WOOD]: 0xa9743f, [T.WALL]: 0xe6dcc6, [T.FENCE]: 0xb08a5c, [T.LEAF]: 0x4f8f4a,
@@ -191,7 +192,7 @@ export class World {
     const x0 = cx * CH, z0 = cz * CH;
     for (let y = 0; y < SY; y++) for (let z = z0; z < z0 + CH; z++) for (let x = x0; x < x0 + CH; x++) {
       const t = this.type[x + SX * (z + SZ * y)];
-      if (!t) continue;
+      if (!t || t === T.GHOST) continue;
       if (t === T.CARD || t === T.EDGE) nCard++; else nSolid++;
     }
     ch.card = this.ensure(ch.card, nCard, this.cardMat);
@@ -200,7 +201,7 @@ export class World {
     const m = this._m, c = this._c;
     for (let y = 0; y < SY; y++) for (let z = z0; z < z0 + CH; z++) for (let x = x0; x < x0 + CH; x++) {
       const i = x + SX * (z + SZ * y), t = this.type[i];
-      if (!t) continue;
+      if (!t || t === T.GHOST) continue;
       m.makeTranslation(x + 0.5, y + 0.5, z + 0.5);
       const h = hash(i);
       if (t === T.CARD) {
@@ -246,12 +247,17 @@ export const PLACES = {
   treeTopY: 7,
   respawn: { x: 80.5, z: 64.5 },
   shop: { x: 58.9, z: 61 },
+  yard: [[79.5, 69.5], [81.5, 69.5], [83.5, 69.5]], // where captured flags stand, on the ground, stealable
   forts: [
     { team: 1, x: 24, z: 26, name: 'Box Knights', color: 0xd9483b },
     { team: 2, x: 104, z: 26, name: 'Alley Pirates', color: 0x8a4fd1 },
     { team: 3, x: 24, z: 100, name: 'Dino Scouts', color: 0x3fa35c },
   ],
-  pools: [{ x: 73, z: 112 }, { x: 34, z: 62 }, { x: 96, z: 64 }, { x: 62, z: 30 }, { x: 102, z: 102 }],
+  pools: [
+    { x: 73, z: 112, owner: 0, name: 'South pool' }, { x: 34, z: 62, owner: 3, name: 'West pool' },
+    { x: 96, z: 64, owner: 2, name: 'East pool' }, { x: 62, z: 30, owner: 1, name: 'North pool' },
+    { x: 102, z: 102, owner: -1, name: 'Corner pool' },
+  ],
 };
 
 export function generate(world, seed = 7) {
@@ -261,18 +267,23 @@ export function generate(world, seed = 7) {
   const fill = (x0, y0, z0, x1, y1, z1, t) => {
     for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) set(x, y, z, t);
   };
-  const shell = (x0, z0, x1, z1, h, t, roofT) => {
-    for (let y = 0; y < h; y++) for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++)
+  const shell = (x0, z0, x1, z1, h, t, roofT, y0 = 0) => {
+    for (let y = y0; y < h; y++) for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++)
       if (x === x0 || x === x1 || z === z0 || z === z1) set(x, y, z, t);
     if (roofT) fill(x0, h, z0, x1, h, z1, roofT);
   };
-  const loot = [], flaps = [], signs = []; // decoration hangs off a support cell and goes when it does
+  // decoration hangs off a support cell and goes when that cell melts
+  const loot = [], flaps = [], signs = [], towers = [], shops = [], standees = [];
 
-  // --- city boundary: looming stacks you can't melt or see past
+  // --- city boundary: stacks you can't melt, with giant boxes looming behind them
   for (let i = 0; i < CITY; i++) for (let k = 0; k < 2; k++) {
     const h = () => ri(9, 13);
     fill(i, 0, k, i, h(), k, T.EDGE); fill(i, 0, CITY - 1 - k, i, h(), CITY - 1 - k, T.EDGE);
     fill(k, 0, i, k, h(), i, T.EDGE); fill(CITY - 1 - k, 0, i, CITY - 1 - k, h(), i, T.EDGE);
+  }
+  for (let side = 0; side < 4; side++) for (let i = -4; i < CITY + 4; i += ri(7, 11)) {
+    const o = side % 2 ? CITY + 5 : -5, w = ri(9, 13);
+    towers.push({ x: side < 2 ? i : o, z: side < 2 ? o : i, y0: 0, w, d: w, h: ri(22, 44), yaw: (R() - 0.5) * 0.3, tilt: (R() - 0.5) * 0.06 });
   }
 
   // --- reserved ground (1 = keep clear)
@@ -286,10 +297,11 @@ export function generate(world, seed = 7) {
     for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) if (mask[x + CITY * z]) return false;
     return true;
   };
-  reserve(50, 52, 82, 76);              // treehouse clearing + stairs
-  reserve(60, 110, 69, 125);            // arrival street
-  for (const p of PLACES.pools) reserve(p.x - 4, p.z - 4, p.x + 4, p.z + 4);
-  for (const f of PLACES.forts) reserve(f.x - 13, f.z - 13, f.x + 13, f.z + 13);
+  reserve(52, 53, 85, 76);              // treehouse clearing, stairs and flag yard
+  reserve(63, 77, 66, 125);             // the one wide street: arrival gate to the Treehouse
+  reserve(8, 88, 119, 89);              // a cross street
+  for (const p of PLACES.pools) reserve(p.x - 5, p.z - 5, p.x + 5, p.z + 5);
+  for (const f of PLACES.forts) reserve(f.x - 12, f.z - 12, f.x + 12, f.z + 12);
 
   // --- treehouse: real wood, water can't touch it
   {
@@ -311,74 +323,90 @@ export function generate(world, seed = 7) {
     shell(cx - 10, cz - 10, cx + 10, cz + 10, 5, T.CARD);
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]])
       shell(cx + sx * 10 - 1, cz + sz * 10 - 1, cx + sx * 10 + 1, cz + sz * 10 + 1, 9, T.CARD, T.CARD);
-    // gate on the side facing the middle of the city
-    const gx = cx < 64 ? cx + 10 : cx - 10;
+    const gx = cx < 64 ? cx + 10 : cx - 10; // gate on the side facing the middle of the city
     fill(gx, 0, cz - 1, gx, 2, cz + 1, T.AIR);
     signs.push({ x: cx < 64 ? gx + 1 : gx, y: 3.9, z: cz + 0.5, dx: cx < 64 ? 1 : -1, dz: 0, sup: [gx, 3, cz], text: f.name.toUpperCase(), big: true });
     shell(cx - 2, cz - 2, cx + 2, cz + 2, 3, T.CARD, T.CARD); // sealed keep holding the flag
+    towers.push({ x: cx + 0.5, z: cz + 0.5, y0: 4, w: 4.6, d: 4.6, h: 9, yaw: 0.06, tilt: 0.02 });
+    shell(cx - 2, cz - 2, cx + 2, cz + 2, SY, T.GHOST, 0, 4);
   }
 
-  // --- buildings: hollow boxes, some with doors, some you have to melt into
-  for (let n = 0; n < 900; n++) {
-    const w = ri(4, 10), d = ri(4, 10), h = ri(3, 8);
+  // --- the city: boxes packed tight, alleys one or two cells wide, towers stacked on top
+  const SHOPS = 10;
+  for (let n = 0; n < 11000; n++) {
+    const small = n > 4500; // second pass: little boxes wedged into whatever gaps are left
+    const w = small ? ri(3, 6) : ri(5, 11), d = small ? ri(3, 6) : ri(5, 11), h = ri(4, 7), m = small || R() < 0.6 ? 1 : 2;
     const x0 = ri(3, CITY - 4 - w), z0 = ri(3, CITY - 4 - d), x1 = x0 + w - 1, z1 = z0 + d - 1;
-    if (!free(x0 - 2, z0 - 2, x1 + 2, z1 + 2)) continue;
+    if (!free(x0 - m, z0 - m, x1 + m, z1 + m)) continue;
     reserve(x0, z0, x1, z1);
-    const roofed = R() < 0.7;
-    shell(x0, z0, x1, z1, h, T.CARD, roofed ? T.CARD : 0);
-    if (R() < 0.55) { // doorway
-      const side = ri(0, 3);
-      const dx = side < 2 ? ri(x0 + 1, x1 - 1) : (side === 2 ? x0 : x1);
-      const dz = side < 2 ? (side === 0 ? z0 : z1) : ri(z0 + 1, z1 - 1);
-      fill(dx, 0, dz, dx, 1, dz, T.AIR);
+    const tall = R() < 0.85;
+    shell(x0, z0, x1, z1, h, T.CARD, tall || R() < 0.5 ? T.CARD : 0);
+    let top = h + 1;
+    if (tall) {
+      // upper floors are big single boxes, a little crooked, each smaller than the one below
+      let sw = w, sd = d, y = h + 1;
+      const cx = (x0 + x1 + 1) / 2, cz = (z0 + z1 + 1) / 2;
+      for (let k = ri(1, 3); k > 0; k--) {
+        sw = Math.max(3, sw - R() * 1.6); sd = Math.max(3, sd - R() * 1.6);
+        const sh = ri(4, 12);
+        towers.push({ x: cx + (R() - 0.5) * 0.8, z: cz + (R() - 0.5) * 0.8, y0: y, w: sw, d: sd, h: sh, yaw: (R() - 0.5) * 0.16, tilt: (R() - 0.5) * 0.05 });
+        y += sh;
+      }
+      shell(x0, z0, x1, z1, SY, T.GHOST, 0, h + 1);
+      top = y;
     }
-    if (h >= 3) for (let k = 0; k < 3; k++) { // windows
-      const side = ri(0, 3);
-      const wx = side < 2 ? ri(x0 + 1, x1 - 1) : (side === 2 ? x0 : x1);
-      const wz = side < 2 ? (side === 0 ? z0 : z1) : ri(z0 + 1, z1 - 1);
-      set(wx, ri(1, h - 1), wz, T.AIR);
-    }
-    if (roofed && R() < 0.35 && w > 5 && d > 5) { // a box on top of the box
-      const hh = h + ri(2, 3);
-      for (let y = h + 1; y <= hh; y++) for (let z = z0 + 1; z <= z0 + 3; z++) for (let x = x0 + 1; x <= x0 + 3; x++)
-        if (y === hh || x === x0 + 1 || x === x0 + 3 || z === z0 + 1 || z === z0 + 3) set(x, y, z, T.CARD);
-    }
-    const top = roofed ? h + 1 : h;
+    const doorSide = ri(0, 3);
     for (let side = 0; side < 4; side++) {
-      const horiz = side < 2, near = side % 2 === 0;
+      const horiz = side < 2, near = side % 2 === 0, len = horiz ? w : d;
       const fx = horiz ? (x0 + x1 + 1) / 2 : (near ? x0 : x1 + 1), fz = horiz ? (near ? z0 : z1 + 1) : (z0 + z1 + 1) / 2;
       const dx = horiz ? 0 : (near ? -1 : 1), dz = horiz ? (near ? -1 : 1) : 0;
       const sx = horiz ? Math.floor(fx) : (near ? x0 : x1), sz = horiz ? (near ? z0 : z1) : Math.floor(fz);
-      if (R() < 0.45) flaps.push({ x: fx, y: top, z: fz, len: (horiz ? w : d) - 0.3, dx, dz, a: R() * 1.5 - 0.45, sup: [sx, top - 1, sz] });
-      else if (R() < 0.22) signs.push({ x: fx, y: 1.5 + R() * 0.5, z: fz, dx, dz, sup: [sx, 1, sz] });
+      if (R() < 0.4) flaps.push({ x: fx, y: tall ? top : h, z: fz, len: len - 0.3, dx, dz, a: R() * 1.5 - 0.45, sup: tall ? null : [sx, h - 1, sz] });
+      if (side === doorSide) {
+        if (R() < 0.6) { // a real doorway
+          const dxx = horiz ? ri(x0 + 1, x1 - 1) : sx, dzz = horiz ? sz : ri(z0 + 1, z1 - 1);
+          fill(dxx, 0, dzz, dxx, 1, dzz, T.AIR);
+        }
+      } else if (len >= 6 && R() < 0.34) { // a fake shopfront: painted door, window, awning, sign
+        shops.push({ x: horiz ? sx + 0.5 : fx, z: horiz ? fz : sz + 0.5, dx, dz, ax: horiz ? 1 : 0, az: horiz ? 0 : 1, sx, sz, kind: ri(0, SHOPS - 1) });
+      } else if (R() < 0.16) signs.push({ x: fx, y: 1.5 + R() * 0.5, z: fz, dx, dz, sup: [sx, 1, sz] });
+      else if (h >= 5 && R() < 0.5) { // a window, above head height
+        const wx = horiz ? ri(x0 + 1, x1 - 1) : sx, wz = horiz ? sz : ri(z0 + 1, z1 - 1);
+        set(wx, ri(2, h - 2), wz, T.AIR);
+      }
     }
-    if (R() < 0.7) {
+    if (R() < 0.6) {
       const k = R();
       loot.push({ x: (x0 + x1 + 1) / 2, y: 0, z: (z0 + z1 + 1) / 2, kind: k < 0.6 ? 'caps' : k < 0.8 ? 'balloon' : 'bottle' });
     }
-    if (roofed && R() < 0.25) loot.push({ x: x0 + 1.5, y: h + 1, z: z1 - 0.5, kind: 'caps' });
   }
 
-  // --- long walls that cut streets off (melt through or go around)
-  for (let n = 0; n < 40; n++) {
-    const horiz = R() < 0.5, len = ri(8, 22), h = ri(2, 5);
+  // --- a few long walls and loose boxes in the open bits
+  for (let n = 0; n < 10; n++) {
+    const horiz = R() < 0.5, len = ri(8, 18), h = ri(2, 5);
     const x0 = ri(4, CITY - 5 - (horiz ? len : 0)), z0 = ri(4, CITY - 5 - (horiz ? 0 : len));
     const x1 = horiz ? x0 + len : x0, z1 = horiz ? z0 : z0 + len;
     for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++)
       if (!mask[x + CITY * z]) fill(x, 0, z, x, h - 1 - (R() < 0.15 ? 1 : 0), z, T.CARD);
   }
-  // --- loose stacks
-  for (let n = 0; n < 420; n++) {
+  for (let n = 0; n < 150; n++) {
     const x = ri(3, CITY - 4), z = ri(3, CITY - 4);
     if (mask[x + CITY * z]) continue;
-    fill(x, 0, z, x, ri(0, 2), z, T.CARD);
+    fill(x, 0, z, x, R() < 0.8 ? 0 : 1, z, T.CARD);
   }
-  // a few crates inside each fort for cover
+  // crates inside each fort for cover
   for (const f of PLACES.forts) for (let n = 0; n < 14; n++) {
     const x = f.x + ri(-8, 8), z = f.z + ri(-8, 8);
     if (Math.abs(x - f.x) < 4 && Math.abs(z - f.z) < 4) continue;
     if (Math.abs(z - f.z) < 2) continue; // keep the gate lane open
     fill(x, 0, z, x, ri(0, 1), z, T.CARD);
+  }
+  // cardboard cut-out kids standing around the alleys
+  for (let n = 0; n < 2000 && standees.length < 70; n++) {
+    const x = ri(4, CITY - 5), z = ri(4, CITY - 5);
+    if (world.solid(x, 0, z) || world.solid(x, 1, z)) continue;
+    if (Math.hypot(x - 64, z - 64) < 14 || (Math.abs(x - 64.5) < 3 && z > 104)) continue;
+    standees.push({ x: x + 0.5, z: z + 0.5, yaw: R() * 6.28, team: ri(1, 3) });
   }
 
   // --- the house (front door faces +z, you walk -z through it)
@@ -409,5 +437,6 @@ export function generate(world, seed = 7) {
     fill(63, 0, 177, 65, 2, 183, T.CARD); fill(64, 0, 178, 64, 1, 183, T.AIR); // the big box with the hole
     fill(62, 0, 184, 62, 0, 184, T.CARD); fill(67, 0, 185, 67, 1, 185, T.CARD); fill(60, 0, 186, 60, 0, 186, T.CARD);
   }
-  return { loot, flaps, signs };
+  world.orig = world.type.slice(); // what the tribes rebuild back to
+  return { loot, flaps, signs, towers, shops, standees };
 }

@@ -11,17 +11,38 @@ as fights move through it.
 ## What's in the prototype
 
 - Intro: front door, big brother, wrecked house, backyard, the hole in the big box.
-- A 128×128 voxel city of cardboard buildings, walls, stacks and three tribe forts. Fog and tall
-  outer stacks mean you never see out of it.
-- Squirter with a water tank. Refill at kiddie pools or with water bottles you find.
-- Melted walls sometimes leave dry boxes you can pick up and place (stairs, bridges, cover).
-- Water balloons that open a whole wall at once.
-- Three tribes in costumes (Box Knights, Alley Pirates, Dino Scouts) who fight you and each other,
-  and tunnel through walls when they get stuck.
+- A dense city of cardboard: alleys one or two boxes wide, buildings with crooked towers stacked
+  far overhead, fake shopfronts with painted doors, hand-lettered signs, and cardboard cut-out
+  kids standing around to draw fire. The bottom floors are destructible; the towers are not.
+- Squirter with a water tank. Melted walls sometimes leave dry boxes you can pick up and place.
+  Water balloons open a whole wall. You can stand up a cut-out of yourself as a decoy.
+- Three tribes in costumes (Box Knights, Alley Pirates, Dino Scouts). They path through the alleys,
+  melt through walls when that is shorter, run out of water and have to go refill.
 - A dog that follows you, cats that don't, and geese that knock water out of your tank.
-- The Treehouse in the middle: real wood, can't be melted, nobody fights there. It has a market
-  that trades bottle caps for a bigger tank, more pressure, a raincoat, balloons and boxes.
-- Goal: take the flag out of each tribe's sealed keep and carry all three up to the Treehouse.
+
+## The loop
+
+1. **Prepare at the Treehouse.** It is your team's base: real wood, can't be melted, nobody fights
+   there. The rain barrel fills your tank, the market trades banked bottle caps for upgrades, and
+   the war map sets what your compass points at.
+2. **Push out.** Water is both your weapon and your key. Every wall you melt is water you won't
+   have in the fight.
+3. **Hit the objective.** Take a pool by standing in it alone for five seconds, or melt into a
+   fort's sealed keep and grab the flag.
+4. **Get home.** Caps you pick up sit in your pocket and are lost if you get soaked. A flag slows
+   you down, stops you drying off, and sends its whole tribe after you.
+5. **Bank and upgrade.** Reaching the Treehouse banks your caps. Flags are planted in the yard.
+
+The city pushes back:
+
+- **Pools are territory.** You can only refill at pools your team holds, and so can the tribes.
+  A tribe with no pool nearby has to walk back to its fort for water. Each pool you hold gets one
+  of your friends posted to guard it.
+- **Raids.** Tribes send raiders to take pools they don't hold, including yours.
+- **Flags get stolen back.** A flag in your yard can be carried off by its tribe. You win by
+  holding all three at once.
+- **Walls get re-taped.** Holes you melt are rebuilt after a while, unless you are nearby or you
+  hold the pool in that district.
 
 ## Run it
 
@@ -41,6 +62,7 @@ Then open http://localhost:8000.
 | Mouse | look, hold left click to squirt |
 | Right click / Q | place a box |
 | G | throw a water balloon |
+| X | stand up a cardboard cut-out of yourself |
 | E | talk, open doors, trade |
 
 Touch devices get an on-screen stick and buttons.

@@ -20,7 +20,7 @@ scene.add(camera);
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 scene.add(new THREE.HemisphereLight(0xfff1d6, 0x9a8468, 1.2));
 const sun = new THREE.DirectionalLight(0xfff0d8, 2.3);
-const SUN_DIR = V3(0.55, 0.8, 0.38).normalize();
+const SUN_DIR = V3(0.38, 0.9, 0.24).normalize(); // high enough to drop light into the alleys
 sun.castShadow = true; sun.shadow.mapSize.set(TOUCH ? 1024 : 2048, TOUCH ? 1024 : 2048);
 Object.assign(sun.shadow.camera, { left: -44, right: 44, top: 44, bottom: -44, near: 1, far: 150 });
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.05;
@@ -74,7 +74,7 @@ class Fx {
     scene.add(this.mesh);
     this._m = new THREE.Matrix4(); this._c = new THREE.Color();
   }
-  // kind: 0 cosmetic, 1 water, 2 balloon
+  // kind: 0 cosmetic, 1 your water, 2 balloon, 3 another kid's water
   spawn(x, y, z, vx, vy, vz, life, color, size, kind = 0, team = -9) {
     let i = this.next;
     for (let n = 0; n < this.max && this.life[i] > 0; n++) i = (i + 1) % this.max;
@@ -101,12 +101,12 @@ class Fx {
         let done = false;
         if (world.solidAt(x, y, z)) {
           done = true;
-          if (kind[i] === 1) game.waterHitsBlock(Math.floor(x), Math.floor(y), Math.floor(z), team[i], x - v[j] * dt, y - v[j + 1] * dt, z - v[j + 2] * dt);
+          if (kind[i] !== 2) game.waterHitsBlock(Math.floor(x), Math.floor(y), Math.floor(z), team[i], kind[i] === 1, x - v[j] * dt, y - v[j + 1] * dt, z - v[j + 2] * dt);
         } else for (const a of game.actors) {
           if (a.team === team[i] || !a.targetable()) continue;
           const dx = a.pos.x - x, dz = a.pos.z - z, rr = a.r + 0.16;
           if (dx * dx + dz * dz < rr * rr && y > a.pos.y && y < a.pos.y + a.h) {
-            done = true; if (kind[i] === 1) game.waterHitsActor(a, team[i], x, y, z); break;
+            done = true; if (kind[i] !== 2) game.waterHitsActor(a, team[i], kind[i] === 1, x, y, z); break;
           }
         }
         if (done) { life[i] = 0; if (kind[i] === 2) game.balloonPop(x - v[j] * dt, y - v[j + 1] * dt, z - v[j + 2] * dt, team[i]); }
@@ -157,13 +157,13 @@ function sfx(name, pos) {
 
 // ------------------------------------------------------------------ world
 const world = new World(scene);
-const { loot, flaps, signs } = generate(world);
+const { loot, flaps, signs, towers, shops, standees } = generate(world);
 const fx = new Fx();
 const soggyBlue = new THREE.Color(0x27356b);
 
 const player = {
   pos: V3(PLACES.start.x, 0, PLACES.start.z), vel: V3(), r: 0.3, h: 1.4, onGround: false, blocked: false,
-  team: 0, yaw: 0, pitch: 0, water: 0, tank: 60, wetness: 0, sinceHit: 99, caps: 0, card: 4, balloons: 2,
+  team: 0, yaw: 0, pitch: 0, water: 0, tank: 60, wetness: 0, sinceHit: 99, caps: 0, pocket: 0, card: 4, balloons: 2, decoys: 2,
   hasGun: false, pump: false, coat: false, tankLvl: 0, safe: false, out: 0,
   targetable() { return game.mode === 'city' && !this.safe && game.graceT <= 0; },
   hit(amount) {
@@ -175,25 +175,25 @@ const player = {
 
 const game = {
   scene, world, fx, player, soggyBlue, sfx,
-  mode: 'menu', time: 0, actors: [player], items: [], flags: [], stage: 0, graceT: 0, flash: 0, won: false, marketOpen: false,
+  mode: 'menu', time: 0, actors: [player], items: [], flags: [], pools: [], allies: [], broken: [], goalSel: null, stage: 0, graceT: 0, flash: 0, won: false, marketOpen: false,
   nearPlayer(p, d) { const dx = p.x - player.pos.x, dz = p.z - player.pos.z; return dx * dx + dz * dz < d * d; },
   freeSpot(x, z, range, avoid = 0) {
     for (let n = 0; n < 80; n++) {
       const cx = Math.floor(x + (Math.random() * 2 - 1) * range), cz = Math.floor(z + (Math.random() * 2 - 1) * range);
       if (Math.abs(cx - Math.floor(x)) < avoid && Math.abs(cz - Math.floor(z)) < avoid) continue;
       if (cx < 3 || cz < 3 || cx > CITY - 4 || cz > CITY - 4) continue;
+      if (PLACES.forts.some(f => Math.abs(cx - f.x) <= 2 && Math.abs(cz - f.z) <= 2)) continue; // never inside a sealed keep
       if (!world.solid(cx, 0, cz) && !world.solid(cx, 1, cz)) return { x: cx + 0.5, z: cz + 0.5 };
     }
     return { x: x + 0.5, z: z + 0.5 };
   },
-  waterHitsBlock(x, y, z, team, px, py, pz) {
-    const amount = team === 0 ? (player.pump ? 0.5 : 0.34) : 0.25;
-    world.soak(x, y, z, amount, team === 0);
+  waterHitsBlock(x, y, z, team, byPlayer, px, py, pz) {
+    world.soak(x, y, z, byPlayer ? (player.pump ? 0.5 : 0.34) : 0.25, byPlayer);
     if (Math.random() < 0.6) fx.burst(px, py, pz, 2, 0x8fd0ff, 3, 0.08);
   },
-  waterHitsActor(a, team, x, y, z) {
+  waterHitsActor(a, team, byPlayer, x, y, z) {
     fx.burst(x, y, z, 3, 0xbfe4ff, 3, 0.08);
-    if (a === player) player.hit(7); else a.hit(team === 0 ? (player.pump ? 34 : 25) : 20, team);
+    if (a === player) player.hit(7); else a.hit(byPlayer ? (player.pump ? 34 : 25) : 20, team, byPlayer);
   },
   balloonPop(x, y, z, team) {
     const R = 2.3, cx = Math.floor(x), cy = Math.floor(y), cz = Math.floor(z);
@@ -201,23 +201,30 @@ const game = {
       if ((xx + 0.5 - x) ** 2 + (yy + 0.5 - y) ** 2 + (zz + 0.5 - z) ** 2 < R * R) world.soak(xx, yy, zz, 1.5, team === 0);
     for (const a of game.actors) {
       if (a.team === team || !a.targetable()) continue;
-      if (a.pos.distanceTo(V3(x, y - 0.5, z)) < 3.4) a === player ? player.hit(30) : a.hit(70, team);
+      if (a.pos.distanceTo(V3(x, y - 0.5, z)) < 3.4) a === player ? player.hit(30) : a.hit(70, team, team === 0);
     }
     fx.burst(x, y, z, 40, 0x8fd0ff, 9, 0.14);
     sfx('pop', V3(x, y, z));
   },
-  kidSoaked(kid, byTeam) {
-    if (byTeam === 0) { addItem('caps', kid.pos.x, kid.pos.y, kid.pos.z, 2); toast(`Soaked one of the ${PLACES.forts[kid.team - 1].name}. They dropped caps.`); }
+  kidSoaked(kid, byPlayer) {
+    if (byPlayer && kid.team > 0) { addItem('caps', kid.pos.x, kid.pos.y, kid.pos.z, 2); toast(`Soaked one of the ${TEAM_NAME[kid.team]}. They dropped caps.`); }
   },
+  // where a kid with an empty squirter goes: a pool their side holds, or all the way back to base
+  refillSpot(kid) {
+    let best = null, bd = 1e9;
+    for (const q of game.pools) { const d = Math.hypot(q.x - kid.pos.x, q.z - kid.pos.z); if (q.owner === kid.team && d < bd) { bd = d; best = q; } }
+    return best ? { x: best.x, z: best.z, secs: 1.5 } : { x: kid.base.x, z: kid.base.z, secs: 7 };
+  },
+  hunting(team) { return game.flags.some(f => f.team === team && f.state === 'carried'); },
   goosed(goose, dx, dz) {
     player.vel.x += dx * 9; player.vel.z += dz * 9; player.vel.y = 4;
     if (player.hasGun && player.water > 0) { player.water = Math.max(0, player.water - 8); toast('HONK. The goose knocked water out of your tank.'); }
     sfx('thunk');
   },
   playerSoaked() {
-    const lost = Math.min(3, player.caps); player.caps -= lost;
+    const lost = player.pocket; player.pocket = 0;
     for (const f of game.flags) if (f.state === 'carried') { f.state = 'home'; f.mesh.visible = true; }
-    toast(`Soaked through. You squelch back to the Treehouse${lost ? ` and drop ${lost} caps on the way` : ''}.`);
+    toast(`Soaked through. You squelch back to the Treehouse${lost ? ` and the ${lost} caps in your pockets are gone` : ''}.`);
     fade(() => {
       player.pos.set(PLACES.respawn.x, 0, PLACES.respawn.z); player.vel.set(0, 0, 0); player.yaw = Math.PI / 2; player.pitch = 0;
       player.wetness = 0; player.water = Math.max(player.water, player.tank / 2);
@@ -229,6 +236,7 @@ world.onBreak = (x, y, z, byPlayer) => {
   fx.burst(x + 0.5, y + 0.5, z + 0.5, 7, 0x6b4a2c, 4, 0.16);
   sfx('crumble', V3(x, y, z));
   if (byPlayer && Math.random() < 0.4) player.card++;
+  if (z < CITY && world.orig[world.idx(x, y, z)] === T.CARD && game.broken.length < 4000) game.broken.push({ x, y, z, t: game.time });
   const hung = props.get(world.idx(x, y, z));
   if (hung) { hung.forEach(fn => fn()); props.delete(world.idx(x, y, z)); }
 };
@@ -240,8 +248,22 @@ const kraft = new THREE.MeshLambertMaterial({ color: 0xffffff });
 const dummy = new THREE.Object3D(); dummy.rotation.order = 'YXZ';
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const tone = new THREE.Color();
+const unitBox = new THREE.BoxGeometry(1, 1, 1), unitPlane = new THREE.PlaneGeometry(1, 1);
+const paint = (w, h, draw) => {
+  const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'));
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+};
+// the upper floors: big crooked boxes stacked on the buildings, far too tall for a backyard
+const towerMesh = new THREE.InstancedMesh(unitBox, world.cardMat, towers.length);
+towerMesh.castShadow = towerMesh.receiveShadow = true; towerMesh.frustumCulled = false;
+towers.forEach((t, i) => {
+  dummy.rotation.set(t.tilt, t.yaw, t.tilt * 0.7); dummy.position.set(t.x, t.y0 + t.h / 2 - 0.25, t.z);
+  dummy.scale.set(t.w, t.h, t.d); dummy.updateMatrix();
+  towerMesh.setMatrixAt(i, dummy.matrix); towerMesh.setColorAt(i, tone.setRGB(1, 1, 1));
+});
+scene.add(towerMesh);
 { // open box flaps along the tops of buildings
-  const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), kraft, flaps.length);
+  const mesh = new THREE.InstancedMesh(unitBox, kraft, flaps.length);
   mesh.castShadow = mesh.receiveShadow = true; mesh.frustumCulled = false;
   flaps.forEach((f, i) => {
     const depth = 0.75 + (i % 5) * 0.12;
@@ -249,12 +271,12 @@ const tone = new THREE.Color();
     dummy.position.set(f.x + f.dx * Math.cos(f.a) * depth / 2, f.y + Math.sin(f.a) * depth / 2, f.z + f.dz * Math.cos(f.a) * depth / 2);
     dummy.scale.set(f.len, 0.05, depth); dummy.updateMatrix();
     mesh.setMatrixAt(i, dummy.matrix); mesh.setColorAt(i, tone.setHex([0xc9a26b, 0xb98f58, 0xd3ae76][i % 3]));
-    hang(f.sup, () => { mesh.setMatrixAt(i, ZERO); mesh.instanceMatrix.needsUpdate = true; });
+    if (f.sup) hang(f.sup, () => { mesh.setMatrixAt(i, ZERO); mesh.instanceMatrix.needsUpdate = true; });
   });
   scene.add(mesh);
 }
 { // flattened boxes trampled into the lawn, at every angle
-  const N = 420, mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), kraft, N);
+  const N = 420, mesh = new THREE.InstancedMesh(unitBox, kraft, N);
   mesh.receiveShadow = true; mesh.frustumCulled = false;
   let sd = 11; const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
   for (let i = 0; i < N; i++) {
@@ -270,35 +292,107 @@ const tone = new THREE.Color();
     const m = new THREE.Mesh(geo, leaf); m.position.set(x, y, z); m.scale.set(r, r * 0.55, r); m.rotation.y = x; m.castShadow = true; scene.add(m);
   }
 }
-{ // hand-lettered signs
-  const WORDS = ['KEEP OUT', 'NO GROWN-UPS', 'SECRET HQ', 'PASSWORD?', 'MY HOUSE', 'BANK', 'JAIL', 'NO GEESE', 'HOTEL', 'DO NOT MELT', 'SNACKS', 'LAB'];
-  const INK = ['#c23b2e', '#2a2018', '#2f5fb5', '#2a7a45'];
-  const cache = new Map();
-  const signMat = (text, big) => {
-    if (cache.has(text)) return cache.get(text);
-    const c = document.createElement('canvas'); c.width = 512; c.height = 192;
-    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
-    const draw = () => {
-      const g = c.getContext('2d'); g.fillStyle = big ? '#f4ead2' : '#e9dcc0'; g.fillRect(0, 0, 512, 192);
-      g.strokeStyle = 'rgba(42,32,24,.5)'; g.lineWidth = 6; g.strokeRect(3, 3, 506, 186);
-      g.fillStyle = INK[text.length % INK.length]; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.font = '84px "Permanent Marker", "Comic Sans MS", sans-serif';
-      g.translate(256, 100); g.rotate((text.length % 5 - 2) * 0.025); g.fillText(text, 0, 0, 470); g.setTransform(1, 0, 0, 1, 0, 0);
-      tex.needsUpdate = true;
-    };
-    draw(); document.fonts?.load('84px "Permanent Marker"').then(draw).catch(() => {});
-    const m = new THREE.MeshLambertMaterial({ map: tex }); cache.set(text, m); return m;
+// hand-lettered signs
+const INK = ['#c23b2e', '#2a2018', '#2f5fb5', '#2a7a45'];
+const signCache = new Map();
+function signMat(text, big) {
+  if (signCache.has(text)) return signCache.get(text);
+  const c = document.createElement('canvas'); c.width = 512; c.height = 192;
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+  const draw = () => {
+    const g = c.getContext('2d'); g.fillStyle = big ? '#f4ead2' : '#e9dcc0'; g.fillRect(0, 0, 512, 192);
+    g.strokeStyle = 'rgba(42,32,24,.5)'; g.lineWidth = 6; g.strokeRect(3, 3, 506, 186);
+    g.fillStyle = INK[text.length % INK.length]; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = '84px "Permanent Marker", "Comic Sans MS", sans-serif';
+    g.translate(256, 100); g.rotate((text.length % 5 - 2) * 0.025); g.fillText(text, 0, 0, 470); g.setTransform(1, 0, 0, 1, 0, 0);
+    tex.needsUpdate = true;
   };
-  const geo = new THREE.PlaneGeometry(1, 1);
+  draw(); document.fonts?.load('84px "Permanent Marker"').then(draw).catch(() => {});
+  const m = new THREE.MeshLambertMaterial({ map: tex }); signCache.set(text, m); return m;
+}
+// A flat thing stuck on a wall. It stays only while every cell behind it is still cardboard.
+function stick(geo, mat, w, h, d, x, y, z, dx, dz, sups, tiltX = 0, roll = 0) {
+  if (sups.some(c => world.get(...c) !== T.CARD)) return;
+  const m = new THREE.Mesh(geo, mat);
+  m.scale.set(w, h, d); m.position.set(x, y, z); m.rotation.set(tiltX, Math.atan2(dx, dz), roll, 'YXZ');
+  m.receiveShadow = true; m.castShadow = d > 0.5; scene.add(m);
+  for (const c of sups) hang(c, () => { m.visible = false; });
+}
+{
+  const WORDS = ['KEEP OUT', 'NO GROWN-UPS', 'SECRET HQ', 'PASSWORD?', 'MY HOUSE', 'JAIL', 'NO GEESE', 'HOTEL', 'DO NOT MELT', 'LAB', 'DEAD END', 'THIS WAY'];
   signs.forEach((sg, i) => {
-    if (world.get(...sg.sup) !== T.CARD) return;
-    const text = sg.text || WORDS[i % WORDS.length], w = sg.big ? 3.4 : 1.7;
-    const m = new THREE.Mesh(geo, signMat(text, sg.big));
-    m.scale.set(w, w * 0.375, 1); m.position.set(sg.x + sg.dx * 0.03, sg.y, sg.z + sg.dz * 0.03);
-    m.rotation.set(0, Math.atan2(sg.dx, sg.dz), (i % 7 - 3) * (sg.big ? 0.012 : 0.03), 'YXZ'); m.receiveShadow = true;
-    scene.add(m); hang(sg.sup, () => { m.visible = false; });
+    const w = sg.big ? 3.4 : 1.7;
+    stick(unitPlane, signMat(sg.text || WORDS[i % WORDS.length], sg.big), w, w * 0.375, 1, sg.x + sg.dx * 0.03, sg.y, sg.z + sg.dz * 0.03, sg.dx, sg.dz, [sg.sup], 0, (i % 7 - 3) * (sg.big ? 0.012 : 0.03));
   });
 }
+{ // fake shopfronts: a painted door that doesn't open, a painted window, an awning and a name
+  const NAMES = ['PIZZA', 'ARCADE', 'PET SHOP', 'CANDY', 'TOYS', 'COMICS', 'ICE CREAM', 'BARBER', 'CINEMA', 'DONUTS'];
+  const AWN = [0xd9483b, 0x2f7fb5, 0x3fa35c, 0xe8a13a, 0x8a4fd1].map(c => new THREE.MeshLambertMaterial({
+    color: c, map: paint(64, 8, g => { for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#fff' : '#b9b9b9'; g.fillRect(i * 8, 0, 8, 8); } }),
+  }));
+  const door = new THREE.MeshLambertMaterial({ map: paint(128, 256, g => {
+    g.fillStyle = '#6f4a31'; g.fillRect(0, 0, 128, 256); g.strokeStyle = '#2a2018'; g.lineWidth = 8; g.strokeRect(4, 4, 120, 252);
+    g.lineWidth = 4; g.strokeRect(22, 24, 84, 84); g.strokeRect(22, 132, 84, 96);
+    g.fillStyle = '#e8c74a'; g.beginPath(); g.arc(102, 124, 8, 0, 7); g.fill(); g.stroke();
+    g.fillStyle = '#f4ead2'; g.fillRect(34, 46, 60, 30); g.fillStyle = '#c23b2e'; g.font = 'bold 22px sans-serif'; g.textAlign = 'center'; g.fillText('OPEN', 64, 69);
+  }) });
+  const pane = new THREE.MeshLambertMaterial({ map: paint(192, 128, g => {
+    g.fillStyle = '#bfe0ee'; g.fillRect(0, 0, 192, 128); g.strokeStyle = 'rgba(255,255,255,.8)'; g.lineWidth = 6;
+    g.beginPath(); g.moveTo(20, 100); g.lineTo(70, 20); g.moveTo(50, 110); g.lineTo(90, 46); g.stroke();
+    g.strokeStyle = '#2a2018'; g.lineWidth = 9; g.strokeRect(4, 4, 184, 120); g.lineWidth = 5; g.beginPath(); g.moveTo(96, 4); g.lineTo(96, 124); g.moveTo(4, 64); g.lineTo(188, 64); g.stroke();
+  }) });
+  shops.forEach((sh, i) => {
+    const at = (k, out) => [sh.x + sh.ax * k + sh.dx * out, sh.z + sh.az * k + sh.dz * out];
+    const cell = (k, y) => [sh.sx + sh.ax * k, y, sh.sz + sh.az * k];
+    let [x, z] = at(0, 0.03);
+    stick(unitPlane, door, 1, 1.9, 1, x, 0.95, z, sh.dx, sh.dz, [cell(0, 0), cell(0, 1)]);
+    for (const k of [-2, 2]) { [x, z] = at(k, 0.03); stick(unitPlane, pane, 1.5, 1.05, 1, x, 1.45, z, sh.dx, sh.dz, [cell(k, 1)]); }
+    [x, z] = at(0, 0.04); stick(unitPlane, signMat(NAMES[sh.kind], true), 3.3, 1.15, 1, x, 3.5, z, sh.dx, sh.dz, [cell(0, 3)], 0, (i % 5 - 2) * 0.012);
+    [x, z] = at(0, 0.5); stick(unitBox, AWN[i % AWN.length], 4.4, 0.06, 1.05, x, 2.62, z, sh.dx, sh.dz, [cell(0, 2)], 0.33);
+  });
+}
+
+// ------------------------------------------------------------------ cardboard cut-out kids
+// They draw fire. The tribes' ones fool you and each other; yours fool them.
+const TEAM_COL = { '-1': 0xe9dcc0, 0: 0x35a7c4, 1: 0xd9483b, 2: 0x8a4fd1, 3: 0x3fa35c };
+const TEAM_NAME = { 0: 'your team', 1: 'Box Knights', 2: 'Alley Pirates', 3: 'Dino Scouts' };
+const standeeMats = [0, 1, 2, 3].map(team => {
+  const map = paint(128, 192, g => {
+    const col = '#' + TEAM_COL[team].toString(16).padStart(6, '0');
+    g.lineJoin = 'round'; g.strokeStyle = '#2a2018'; g.lineWidth = 6; g.fillStyle = '#c9a26b';
+    const part = f => { g.beginPath(); f(); g.fill(); g.stroke(); };
+    part(() => g.rect(42, 126, 18, 60)); part(() => g.rect(68, 126, 18, 60));      // legs
+    part(() => g.rect(86, 70, 34, 14)); part(() => g.rect(108, 58, 16, 14));       // arm and squirter
+    part(() => g.roundRect(36, 62, 56, 70, 10));                                   // body
+    part(() => g.arc(64, 36, 25, 0, 7));                                           // head
+    g.strokeStyle = col; g.lineWidth = 7; g.beginPath();
+    for (let y = 74; y < 126; y += 11) { g.moveTo(44, y); g.lineTo(84, y + 6); } g.stroke(); // crayon shirt
+    g.fillStyle = '#2a2018'; g.beginPath(); g.arc(55, 32, 3.5, 0, 7); g.arc(73, 32, 3.5, 0, 7); g.fill();
+    g.strokeStyle = '#2a2018'; g.lineWidth = 3; g.beginPath(); g.arc(64, 40, 9, 0.3, 2.8); g.stroke();
+  });
+  return { face: new THREE.MeshLambertMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide }),
+    depth: new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map, alphaTest: 0.5 }) };
+});
+class Decoy {
+  constructor(x, y, z, yaw, team) {
+    this.pos = V3(x, y, z); this.r = 0.32; this.h = 1.3; this.team = team; this.wet = 0; this.out = 0; this.fall = 0; this.isDecoy = true; this.dead = false;
+    this.pivot = new THREE.Group(); this.pivot.rotation.order = 'YXZ'; this.pivot.position.copy(this.pos); this.pivot.rotation.y = yaw;
+    const m = new THREE.Mesh(unitPlane, standeeMats[team].face); m.customDepthMaterial = standeeMats[team].depth;
+    m.scale.set(0.9, 1.35, 1); m.position.y = 0.675; m.castShadow = true; this.pivot.add(m); scene.add(this.pivot);
+  }
+  targetable() { return this.out <= 0; }
+  hit(amount) { if (this.out > 0) return; this.wet += amount; if (this.wet >= 50) { this.out = 1; sfx('crumble', this.pos); } }
+  update(dt) {
+    if (this.out <= 0) return;
+    this.fall += dt * 2.5; this.pivot.rotation.x = Math.min(1.5, this.fall);
+    if (this.fall < 4) return;
+    if (this.team === 0) { scene.remove(this.pivot); this.dead = true; return; }
+    // the tribes prop theirs back up once nobody is looking
+    this.pivot.visible = false;
+    if (this.fall > 150 && !game.nearPlayer(this.pos, 20)) { this.out = 0; this.wet = 0; this.fall = 0; this.pivot.rotation.x = 0; this.pivot.visible = true; }
+  }
+}
+for (const sd of standees) game.actors.push(new Decoy(sd.x, 0, sd.z, sd.yaw, sd.team));
 
 // ------------------------------------------------------------------ things in the world
 const capGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.05, 8);
@@ -314,12 +408,18 @@ function addItem(kind, x, y, z, n) {
 }
 for (const l of loot) addItem(l.kind, l.x, l.y, l.z);
 
-for (const p of PLACES.pools) {
+PLACES.pools.forEach((p, i) => {
   const pool = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 0.34, 20), new THREE.MeshLambertMaterial({ color: 0xe86a8a }));
-  pool.position.set(p.x, 0.17, p.z); scene.add(pool);
+  pool.position.set(p.x, 0.17, p.z); pool.receiveShadow = true; scene.add(pool);
   const water = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.3, 0.36, 20), new THREE.MeshBasicMaterial({ color: 0x4fb4ff }));
   water.position.set(p.x, 0.17, p.z); scene.add(water);
-}
+  // a pennant says whose pool it is
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 3.4, 6), new THREE.MeshLambertMaterial({ color: 0xe8dcc0 }));
+  pole.position.set(p.x + 2.7, 1.7, p.z); scene.add(pole);
+  const cloth = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.7, 0.05), new THREE.MeshLambertMaterial({ color: TEAM_COL[p.owner] }));
+  cloth.position.set(p.x + 3.25, 3, p.z); scene.add(cloth);
+  game.pools.push({ ...p, i, cloth, capTeam: -1, capT: 0 });
+});
 
 function makeFlag(color) {
   const g = new THREE.Group();
@@ -329,10 +429,9 @@ function makeFlag(color) {
   cloth.position.set(0.4, 1.95, 0); g.add(cloth);
   scene.add(g); return g;
 }
-const DECK = [[70.2, 58.8], [70.2, 70.2], [58.8, 70.2]];
 PLACES.forts.forEach((f, i) => {
   const mesh = makeFlag(f.color); mesh.position.set(f.x + 0.5, 0, f.z + 0.5);
-  game.flags.push({ ...f, mesh, state: 'home', home: V3(f.x + 0.5, 0, f.z + 0.5), deck: DECK[i] });
+  game.flags.push({ ...f, mesh, state: 'home', home: V3(f.x + 0.5, 0, f.z + 0.5), yard: PLACES.yard[i], stealT: 0 });
   // banners on the fort towers so you can tell whose turf it is
   for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { const b = makeFlag(f.color); b.position.set(f.x + sx * 10 + 0.5, 10, f.z + sz * 10 + 0.5); }
   $('flags').children[i].style.setProperty('--c', '#' + f.color.toString(16).padStart(6, '0'));
@@ -340,13 +439,103 @@ PLACES.forts.forEach((f, i) => {
 
 const COSTUME = [null, { costume: 'knight', shirt: 0xd9483b }, { costume: 'pirate', shirt: 0x8a4fd1 }, { costume: 'dino', shirt: 0x3fa35c }];
 const addActor = a => { game.actors.push(a); return a; };
-for (const f of PLACES.forts) for (let i = 0; i < 6; i++) {
-  // half of each tribe guards the fort, the other half raids the middle of the city
-  const home = i < 3 ? { x: f.x + 0.5, z: f.z + 0.5 } : { x: 64 + (f.x - 64) * 0.3 + (i - 4) * 9, z: 64 + (f.z - 64) * 0.3 + (4 - i) * 9 };
-  const s = i < 3 ? game.freeSpot(f.x, f.z, 8, 4) : game.freeSpot(home.x, home.z, 5);
-  const k = addActor(new Kid(game, { ...COSTUME[f.team], team: f.team, x: s.x, z: s.z }));
-  k.home = home;
+// Each tribe: three guards who stay in the fort, three raiders the tribe sends around the city.
+const tribes = PLACES.forts.map((f, i) => ({ ...f, t: 25 + i * 14, guards: [], raiders: [] }));
+for (const tr of tribes) for (let i = 0; i < 6; i++) {
+  const court = { x: tr.x + (tr.x < 64 ? 6 : -6) + 0.5, z: tr.z + 0.5 }, raider = i >= 3;
+  const post = raider ? { x: 64 + (tr.x - 64) * 0.45 + (i - 4) * 8, z: 64 + (tr.z - 64) * 0.45 + (4 - i) * 8 } : court;
+  const s = game.freeSpot(post.x, post.z, 6);
+  const k = addActor(new Kid(game, { ...COSTUME[tr.team], team: tr.team, x: s.x, z: s.z }));
+  k.base = court; k.home = post; k.range = raider ? 8 : 7;
+  (raider ? tr.raiders : tr.guards).push(k);
 }
+// Your team. One friend goes out to guard each pool you hold.
+const ALLY_NAMES = ['Juno', 'Bea', 'Tomás', 'Ike'];
+function postAlly(pool, quiet) {
+  let k = game.allies.find(a => !a.post);
+  if (!k && game.allies.length < ALLY_NAMES.length) {
+    const s = game.freeSpot(PLACES.respawn.x, PLACES.respawn.z, 3);
+    k = addActor(new Kid(game, { team: 0, costume: 'cape', shirt: 0x35a7c4, x: s.x, z: s.z }));
+    k.base = { x: PLACES.respawn.x, z: PLACES.respawn.z }; k.name = ALLY_NAMES[game.allies.length]; game.allies.push(k);
+  }
+  if (!k) return;
+  k.post = pool; k.home = { x: pool.x, z: pool.z }; k.range = 4; k.goal = null;
+  if (quiet) { const s = game.freeSpot(pool.x, pool.z, 3); k.pos.set(s.x, 0, s.z); } else toast(`${k.name} heads out to guard it.`);
+}
+function setPoolOwner(pool, team) {
+  const old = pool.owner; pool.owner = team; pool.capT = 0; pool.capTeam = -1;
+  pool.cloth.material.color.setHex(TEAM_COL[team]);
+  if (team === 0) { toast(`You hold the ${pool.name}. Refill here, and box it in before they come back.`); sfx('win'); postAlly(pool); }
+  else if (old === 0) {
+    toast(`The ${TEAM_NAME[team]} took your ${pool.name}!`); sfx('empty');
+    const k = game.allies.find(a => a.post === pool); if (k) { k.post = null; k.home = k.base; k.goal = null; }
+  }
+}
+postAlly(game.pools[0], true);
+
+// ---- territory: stand in a pool with nobody else's side around and it becomes yours
+function updatePools(dt) {
+  let showing = null;
+  for (const pool of game.pools) {
+    let mask = 0, one = -1;
+    for (const a of game.actors) {
+      if (a.team < 0 || a.isDecoy) continue;
+      if (a === player ? (game.mode !== 'city' || game.graceT > 0) : a.out > 0) continue;
+      if (a.pos.y < 2 && Math.hypot(a.pos.x - pool.x, a.pos.z - pool.z) < 3.6) { mask |= 1 << a.team; one = a.team; }
+    }
+    if (mask && !(mask & (mask - 1)) && one !== pool.owner) {
+      if (pool.capTeam !== one) { pool.capTeam = one; pool.capT = 0; }
+      if ((pool.capT += dt) >= 5) setPoolOwner(pool, one);
+    } else pool.capT = Math.max(0, pool.capT - dt * 2);
+    if (pool.capT > 0 && (pool.capTeam === 0 || pool.owner === 0) && game.nearPlayer(pool, 30)) showing = pool;
+  }
+  const el = $('capbar'); el.hidden = !showing;
+  if (showing) {
+    $('capname').textContent = showing.capTeam === 0 ? `Taking the ${showing.name}` : `The ${TEAM_NAME[showing.capTeam]} are taking your ${showing.name}!`;
+    el.querySelector('i').style.width = showing.capT / 5 * 100 + '%';
+  }
+}
+
+// ---- the city pushes back
+function director(dt) {
+  if (game.mode !== 'city' || game.stage < 3) return;
+  for (const tr of tribes) {
+    if ((tr.t -= dt) > 0) continue;
+    tr.t = 40 + Math.random() * 25;
+    const flag = game.flags[tr.team - 1];
+    let tx, tz, range = 3, msg = null;
+    if (flag.state === 'captured') { [tx, tz] = flag.yard; range = 2; msg = `The ${tr.name} are coming to steal their flag back!`; }
+    else { // raid a pool they don't hold, usually the nearest
+      const c = game.pools.filter(q => q.owner !== tr.team).sort((a, b) => Math.hypot(a.x - tr.x, a.z - tr.z) - Math.hypot(b.x - tr.x, b.z - tr.z));
+      if (!c.length) continue;
+      const q = c[Math.random() < 0.65 || c.length < 2 ? 0 : 1]; tx = q.x; tz = q.z;
+      if (q.owner === 0) msg = `The ${tr.name} are heading for your ${q.name}.`;
+    }
+    for (const k of tr.raiders) { k.home = { x: tx, z: tz }; k.range = range; k.goal = null; }
+    if (msg) toast(msg);
+  }
+  for (const fl of game.flags) if (fl.state === 'captured') { // a flag in your yard can be taken back
+    const thief = game.actors.some(a => a.team === fl.team && !a.isDecoy && a.out <= 0 && Math.hypot(a.pos.x - fl.yard[0], a.pos.z - fl.yard[1]) < 1.8);
+    fl.stealT = thief ? fl.stealT + dt : 0;
+    if (fl.stealT > 3) { fl.state = 'home'; fl.stealT = 0; fl.mesh.position.copy(fl.home); toast(`The ${fl.name} stole their flag back!`); sfx('empty'); }
+  }
+}
+// Tribes re-tape the walls you melted, unless you're standing there or you hold the pool nearby.
+let rebuildT = 0;
+function rebuild(dt) {
+  if ((rebuildT -= dt) > 0 || game.mode !== 'city') return;
+  rebuildT = 0.4;
+  const B = game.broken;
+  for (let n = Math.min(30, B.length); n > 0; n--) {
+    const b = B.shift();
+    if (world.get(b.x, b.y, b.z) !== T.AIR) continue;
+    const busy = game.time - b.t < 45 || game.nearPlayer(b, 18) || game.pools.some(q => q.owner === 0 && Math.hypot(q.x - b.x, q.z - b.z) < 12)
+      || game.actors.some(a => Math.abs(a.pos.x - b.x - 0.5) < 0.9 && Math.abs(a.pos.z - b.z - 0.5) < 0.9 && a.pos.y < b.y + 1 && a.pos.y + a.h > b.y);
+    if (busy) { B.push(b); continue; }
+    world.set(b.x, b.y, b.z, T.CARD); break;
+  }
+}
+
 const brother = addActor(new Kid(game, { team: -1, still: true, costume: 'brother', shirt: 0x6b6b7a, pants: 0x2f2f38, scale: 1.45, gun: false, x: 63.1, z: 210.4, yaw: Math.PI }));
 const milo = addActor(new Kid(game, { team: -1, still: true, costume: 'cape', shirt: 0x35a7c4, x: PLACES.friend.x, z: PLACES.friend.z, yaw: Math.PI }));
 const keeper = addActor(new Kid(game, { team: -1, still: true, costume: 'apron', shirt: 0xe07b39, gun: false, x: PLACES.shop.x, z: PLACES.shop.z, yaw: -Math.PI / 2 }));
@@ -419,8 +608,9 @@ function meetMilo() {
   game.stage = 3;
   say('Milo', 'You made it! Dad\'s at work till, like, forever. So we built this.');
   say('Milo', 'Take my spare squirter. Water melts cardboard, so any wall is a door if you want it to be.', 4.5);
-  say('Milo', 'Refill at the kiddie pools. Don\'t get soaked. And watch out for the goose.', 4);
-  say('Milo', 'Three tribes, three flags. Get all three up to the Treehouse and the whole city is ours.', 4.5);
+  say('Milo', 'The Treehouse is our base. Fill up there, bank your caps, pick a target on the war map.', 4.5);
+  say('Milo', 'Pools are everything. Hold a pool and you can fight around it. Lose it and you walk home dry.', 4.5);
+  say('Milo', 'Three tribes, three flags. Plant all three in our yard and the city is ours. They will come to take them back.', 5);
   player.hasGun = true; player.water = player.tank; gun.visible = true; sfx('pick');
   toast('Got a squirter. Hold click to spray.');
 }
@@ -449,6 +639,7 @@ const SHOP = [
   { name: 'Pump-action pressure', note: 'Shoots further, melts walls in two hits', cost: 8, can: () => !player.pump, buy() { player.pump = true; } },
   { name: 'Raincoat', note: 'You get soaked a lot slower', cost: 7, can: () => !player.coat, buy() { player.coat = true; } },
   { name: 'Water balloons ×3', note: 'One balloon opens a whole wall', cost: 4, can: () => true, buy() { player.balloons += 3; } },
+  { name: 'Cardboard you ×2', note: 'A cut-out kid. They shoot it instead of you', cost: 3, can: () => true, buy() { player.decoys += 2; } },
   { name: 'Flat-pack bundle ×8', note: 'Boxes to build stairs, bridges and cover', cost: 3, can: () => true, buy() { player.card += 8; } },
 ];
 function renderShop() {
@@ -463,7 +654,19 @@ function renderShop() {
     return b;
   }));
 }
-function openMarket() { game.marketOpen = true; $('market').hidden = false; renderShop(); if (document.pointerLockElement) document.exitPointerLock(); input.fire = false; }
+// The war map: choose what the compass points at before you head out.
+function renderTargets() {
+  const opts = [{ name: 'Nearest flag', sel: null }];
+  for (const f of game.flags) if (f.state === 'home') opts.push({ name: `${f.name} flag`, sel: { name: `${f.name} flag`, x: f.home.x, z: f.home.z, live: () => f.state === 'home' } });
+  for (const q of game.pools) if (q.owner !== 0) opts.push({ name: `${q.name} (${q.owner < 0 ? 'nobody\'s' : TEAM_NAME[q.owner]})`, sel: { name: q.name, x: q.x, z: q.z, live: () => q.owner !== 0 } });
+  $('targets').replaceChildren(...opts.map((o, i) => {
+    const b = document.createElement('button'); b.id = 'target-' + i; b.textContent = o.name;
+    b.setAttribute('aria-pressed', (game.goalSel?.name || null) === (o.sel?.name || null));
+    b.onclick = () => { game.goalSel = o.sel; renderTargets(); };
+    return b;
+  }));
+}
+function openMarket() { game.marketOpen = true; $('market').hidden = false; renderShop(); renderTargets(); if (document.pointerLockElement) document.exitPointerLock(); input.fire = false; }
 function closeMarket() { game.marketOpen = false; $('market').hidden = true; canvas.focus(); }
 $('market-close').onclick = closeMarket;
 
@@ -479,6 +682,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyE') interaction()?.fn();
   if (e.code === 'KeyQ') placeBox();
   if (e.code === 'KeyG') throwBalloon();
+  if (e.code === 'KeyX') placeDecoy();
 });
 addEventListener('keyup', e => input.keys.delete(e.code));
 addEventListener('blur', () => { input.keys.clear(); input.fire = false; });
@@ -526,6 +730,7 @@ if (TOUCH) {
   $('b-jump').addEventListener('pointerdown', e => { e.preventDefault(); input.keys.add('Space'); setTimeout(() => input.keys.delete('Space'), 200); });
   $('b-block').addEventListener('pointerdown', e => { e.preventDefault(); placeBox(); });
   $('b-balloon').addEventListener('pointerdown', e => { e.preventDefault(); throwBalloon(); });
+  $('b-decoy').addEventListener('pointerdown', e => { e.preventDefault(); placeDecoy(); });
 }
 $('start-intro').onclick = startIntro;
 $('start-skip').onclick = () => enterCity(true);
@@ -564,6 +769,13 @@ function placeBox() {
   if (x + 1 > p.x - player.r && x < p.x + player.r && z + 1 > p.z - player.r && z < p.z + player.r && y + 1 > p.y && y < p.y + player.h) return;
   world.set(x, y, z, T.CARD); player.card--; sfx('thunk');
 }
+function placeDecoy() {
+  if (game.mode !== 'city' || player.safe) return;
+  if (player.decoys <= 0) { toast('No cut-outs left. The Treehouse sells them.'); return; }
+  const p = player.pos, x = p.x - Math.sin(player.yaw) * 1.5, z = p.z - Math.cos(player.yaw) * 1.5;
+  if (world.solidAt(x, p.y + 0.4, z) || world.solidAt(x, p.y + 1.1, z)) { toast('No room to stand it up there.'); return; }
+  player.decoys--; game.actors.push(new Decoy(x, p.y, z, player.yaw, 0)); sfx('thunk');
+}
 function throwBalloon() {
   if (game.mode !== 'city' || player.safe) return;
   if (player.balloons <= 0) { toast('No balloons. The Treehouse market sells them.'); return; }
@@ -580,7 +792,7 @@ function updatePlayer(dt) {
   if (k.has('ArrowDown')) player.pitch = clamp(player.pitch - 1.5 * dt, -1.45, 1.45);
   let f = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0) - input.mz, s = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0) + input.mx;
   const len = Math.hypot(f, s); if (len > 1) { f /= len; s /= len; }
-  const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw), speed = 5.3;
+  const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw), carrying = game.flags.some(fl => fl.state === 'carried'), speed = carrying ? 4.3 : 5.3; // a flag is heavy
   const wx = (-sin * f + cos * s) * speed, wz = (-cos * f - sin * s) * speed, a = Math.min(1, dt * 14);
   player.vel.x += (wx - player.vel.x) * a; player.vel.z += (wz - player.vel.z) * a;
   if (k.has('Space') && player.onGround) { player.vel.y = JUMP; player.onGround = false; }
@@ -590,14 +802,21 @@ function updatePlayer(dt) {
   player.sinceHit += dt; game.graceT -= dt;
   const wasSafe = player.safe;
   player.safe = game.mode === 'city' && p.y >= 6.9 && p.x > 57 && p.x < 72 && p.z > 57 && p.z < 72;
-  if (player.safe && !wasSafe) toast('The Treehouse. Real wood. Water can\'t touch it, and nobody fights up here.');
-  if (player.sinceHit > 2.5 || player.safe) player.wetness = Math.max(0, player.wetness - (player.safe ? 30 : 4) * dt);
+  if (player.safe && !wasSafe) {
+    const n = player.pocket; player.caps += n; player.pocket = 0;
+    toast(n ? `Back at base. Banked ${n} caps.` : 'Back at base. Real wood: water can\'t touch it, and nobody fights up here.');
+    if (n) sfx('pick');
+  }
+  if (player.safe && player.hasGun) player.water = Math.min(player.tank, player.water + 40 * dt); // the rain barrel
+  if ((player.sinceHit > 2.5 && !carrying) || player.safe) player.wetness = Math.max(0, player.wetness - (player.safe ? 30 : 4) * dt);
 
   if (game.mode === 'intro' && game.stage === 2 && p.z < 181.6 && Math.abs(p.x - 64.5) < 0.8) { game.stage = 2.5; enterCity(false); }
   if (game.mode === 'city') {
     if (game.stage < 3 && Math.hypot(p.x - milo.pos.x, p.z - milo.pos.z) < 3.4) meetMilo();
     // pools
-    for (const q of PLACES.pools) if (p.y < 0.6 && Math.hypot(p.x - q.x, p.z - q.z) < 2.4 && player.hasGun && player.water < player.tank) {
+    for (const q of game.pools) if (p.y < 0.6 && Math.hypot(p.x - q.x, p.z - q.z) < 2.4 && player.hasGun) {
+      if (q.owner !== 0) { if (player.water < player.tank * 0.5 && q.capT < 0.2) toast('Not your pool. Hold it alone for a few seconds to take it.'); continue; }
+      if (player.water >= player.tank) continue;
       player.water = Math.min(player.tank, player.water + 45 * dt);
       if (Math.random() < dt * 6) sfx('glug');
     }
@@ -606,7 +825,7 @@ function updatePlayer(dt) {
       const it = game.items[i], q = it.g.position;
       it.g.rotation.y += dt * 2; q.y = it.y + Math.sin(game.time * 3 + i) * 0.08;
       if (Math.hypot(q.x - p.x, q.z - p.z) < 1.1 && Math.abs(it.y - p.y - 0.6) < 1.4) {
-        if (it.kind === 'caps') { player.caps += it.n; toast(`+${it.n} bottle caps`); }
+        if (it.kind === 'caps') { player.pocket += it.n; toast(`+${it.n} caps in your pocket. Bank them at the Treehouse.`); }
         else if (it.kind === 'balloon') { player.balloons++; toast('+1 water balloon'); }
         else { player.water = Math.min(player.tank, player.water + 30); toast('A full water bottle. Glug.'); }
         scene.remove(it.g); game.items.splice(i, 1); sfx('pick');
@@ -616,12 +835,12 @@ function updatePlayer(dt) {
     for (const fl of game.flags) {
       if (fl.state === 'home' && p.distanceTo(fl.home) < 1.5) {
         fl.state = 'carried'; fl.mesh.visible = false; sfx('pick');
-        toast(`You grabbed the ${fl.name} flag. Get it to the Treehouse!`);
-      } else if (fl.state === 'carried' && player.safe) {
-        fl.state = 'captured'; fl.mesh.visible = true; fl.mesh.position.set(fl.deck[0], 7, fl.deck[1]); sfx('win');
+        toast(`You grabbed the ${fl.name} flag. It's heavy, and they're all coming. Get it home!`);
+      } else if (fl.state === 'carried' && (player.safe || Math.hypot(p.x - fl.yard[0], p.z - fl.yard[1]) < 3.5)) {
+        fl.state = 'captured'; fl.mesh.visible = true; fl.mesh.position.set(fl.yard[0], 0, fl.yard[1]); sfx('win');
         const n = game.flags.filter(x => x.state === 'captured').length;
-        if (n === 3 && !game.won) { game.won = true; titleCard('The city is yours', 'All three flags fly over the Treehouse. Milo says you can come back tomorrow.', 7); }
-        else toast(`${fl.name} flag planted. ${3 - n} to go.`);
+        if (n === 3 && !game.won) { game.won = true; titleCard('The city is yours', 'All three flags stand in the Treehouse yard. Now keep them there.', 7); }
+        else toast(`${fl.name} flag planted in the yard. ${3 - n} to go. They'll try to take it back.`);
       }
     }
   }
@@ -635,14 +854,17 @@ function updateHud() {
   $('watern').textContent = `${Math.ceil(player.water)} / ${player.tank}`;
   $('waterbar').firstChild.style.width = (player.hasGun ? player.water / player.tank * 100 : 0) + '%';
   $('wetbar').firstChild.style.width = Math.min(100, player.wetness) + '%';
-  $('caps').textContent = player.caps; $('boxes').textContent = player.card; $('balloons').textContent = player.balloons;
+  $('caps').textContent = player.caps + (player.pocket ? ` +${player.pocket}` : ''); $('decoys').textContent = player.decoys; $('boxes').textContent = player.card; $('balloons').textContent = player.balloons;
+  game.pools.forEach((q, i) => { $('pools').children[i].style.background = '#' + TEAM_COL[q.owner].toString(16).padStart(6, '0'); });
   game.flags.forEach((f, i) => { $('flags').children[i].className = f.state === 'home' ? '' : f.state; });
   game.flash = Math.max(0, game.flash - 0.03);
   $('wetflash').style.opacity = Math.max(game.flash, player.wetness > 70 ? (player.wetness - 70) / 60 : 0);
   // compass: next flag, or home if you're carrying one
   let tx = PLACES.tree.x, tz = PLACES.tree.z, name = 'Treehouse';
   if (game.stage < 3) { tx = milo.pos.x; tz = milo.pos.z; name = 'Milo'; }
-  else if (!game.flags.some(f => f.state === 'carried')) {
+  else if (game.flags.some(f => f.state === 'carried')) { /* home */ }
+  else if (game.goalSel && game.goalSel.live()) { tx = game.goalSel.x; tz = game.goalSel.z; name = game.goalSel.name; }
+  else {
     let bd = 1e9;
     for (const f of game.flags) { const d = Math.hypot(f.home.x - player.pos.x, f.home.z - player.pos.z); if (f.state === 'home' && d < bd) { bd = d; tx = f.home.x; tz = f.home.z; name = f.name + ' flag'; } }
   }
@@ -665,9 +887,13 @@ function step(dt) {
   game.time += dt;
   if (game.mode === 'menu') {
     const a = game.time * 0.06;
-    camera.position.set(64.5 + Math.cos(a) * 30, 15, 64.5 + Math.sin(a) * 30); camera.lookAt(64.5, 6, 64.5);
+    camera.position.set(64.5 + Math.cos(a) * 8.5, 8.4, 64.5 + Math.sin(a) * 8.5); camera.lookAt(64.5 + Math.cos(a) * 30, 11, 64.5 + Math.sin(a) * 30); // looking out from the Treehouse
   } else if (!game.marketOpen) { updatePlayer(dt); squirt(dt); }
-  for (const a of game.actors) if (a !== player) a.update(dt);
+  let gone = false;
+  for (const a of game.actors) if (a !== player) { a.update(dt); gone ||= a.dead; }
+  if (gone) game.actors = game.actors.filter(a => !a.dead);
+  updatePools(dt); director(dt); rebuild(dt);
+  towerMesh.visible = game.mode !== 'intro'; // the backyard is an ordinary backyard until you crawl in
   fx.update(dt);
   aimSun(game.mode === 'menu' ? PLACES.tree : camera.position);
   world.update(dt, camera.position, viewDist);

@@ -36,6 +36,14 @@
   #flags i.carried { opacity: 1; background: var(--c); animation: wave .5s infinite alternate; }
   #flags i.captured { opacity: 1; background: var(--c); }
   @keyframes wave { to { transform: translateY(-3px) rotate(-8deg); } }
+  #pools { display: flex; gap: 3px; }
+  #pools i { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--ink); }
+  #pack { flex-wrap: wrap; justify-content: flex-end; max-width: min(560px, calc(100% - 250px)); row-gap: 2px; }
+  #capbar { left: 50%; top: 38%; transform: translateX(-50%); width: min(300px, calc(100% - 32px)); text-align: center; background: var(--tape); display: grid; gap: 4px; }
+  #targets { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+  #targets button { font: inherit; font-size: 16px; color: var(--ink); background: var(--paper); border: 2px solid var(--ink); padding: 3px 9px; border-radius: 3px; cursor: pointer; }
+  #targets button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+  #b-decoy { right: max(176px, env(safe-area-inset-right, 0px)); bottom: 118px; }
   #compass { left: max(16px, env(safe-area-inset-left, 0px)); top: 12px; display: flex; gap: 8px; align-items: center; font-size: 16px; }
   #needle { width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 18px solid var(--alarm); }
   #prompt { left: 50%; top: 60%; transform: translateX(-50%); pointer-events: auto; cursor: pointer; font: inherit; font-size: 20px; color: var(--ink); background: var(--tape); white-space: nowrap; }
@@ -91,7 +99,8 @@
     <div id="compass" class="label" hidden><div id="needle"></div><span id="goal">Treehouse</span></div>
     <div id="pack" class="label" hidden>
       <span id="flags" title="Tribe flags"><i></i><i></i><i></i></span>
-      <span>caps <b id="caps">0</b></span><span>boxes <b id="boxes">0</b></span><span>balloons <b id="balloons">0</b></span>
+      <span id="pools" title="Who holds each pool"><i></i><i></i><i></i><i></i><i></i></span>
+      <span>caps <b id="caps">0</b></span><span>boxes <b id="boxes">0</b></span><span>balloons <b id="balloons">0</b></span><span>cut-outs <b id="decoys">0</b></span>
     </div>
     <div id="stats" class="label" hidden>
       <div class="row"><span>Water</span><span id="watern">0</span></div>
@@ -99,21 +108,25 @@
       <div class="row"><span>How soaked you are</span></div>
       <div class="bar" id="wetbar"><i></i></div>
     </div>
+    <div id="capbar" class="label" hidden><span id="capname"></span><div class="bar"><i></i></div></div>
     <div id="toasts" aria-live="polite"></div>
     <div id="sub" class="label" hidden></div>
     <button id="prompt" class="label" hidden></button>
     <div id="touch" hidden>
       <div id="stick" hidden></div>
-      <button id="b-fire">squirt</button><button id="b-jump">jump</button><button id="b-block">box</button><button id="b-balloon">balloon</button>
+      <button id="b-fire">squirt</button><button id="b-jump">jump</button><button id="b-block">box</button><button id="b-balloon">balloon</button><button id="b-decoy">cut-out</button>
     </div>
     <div id="card"><div><h2 id="card-h">Cardboard City</h2><p id="card-p"></p></div></div>
     <div id="fade"></div>
 
     <div id="market" hidden>
       <div class="panel">
-        <span class="tape">Treehouse market</span>
+        <span class="tape">Treehouse base</span>
+        <h2>War map</h2>
+        <p>Pick where the compass points before you head out.</p>
+        <div id="targets"></div>
         <h2>Caps for stuff</h2>
-        <p>You have <b id="mcaps">0</b> bottle caps. Nobody squirts anybody up here. That's the rule.</p>
+        <p>You have <b id="mcaps">0</b> banked bottle caps. Caps in your pocket only count once you carry them up here.</p>
         <div id="shop"></div>
         <button class="big" id="market-close">Back to it</button>
       </div>
@@ -124,7 +137,7 @@
         <span class="tape">Milo's house, after school</span>
         <h1>Cardboard City</h1>
         <p>Milo's dad is never home. His big brother says he's in the backyard. Behind the back door there is a pile of boxes, and inside the pile there is a whole city.</p>
-        <p>Water melts cardboard. Squirt a wall and it becomes a door.</p>
+        <p>Water melts cardboard, so any wall can be a door. Hold the pools, raid the forts, and carry three flags home to the Treehouse.</p>
         <div class="btns">
           <button class="big" id="start-intro">Knock on the door</button>
           <button class="big alt" id="start-skip">Skip to the city</button>
@@ -134,6 +147,7 @@
           <dt>Mouse</dt><dd>look, hold click to squirt</dd>
           <dt>Right click / Q</dt><dd>put down a box</dd>
           <dt>G</dt><dd>throw a water balloon</dd>
+          <dt>X</dt><dd>stand up a cardboard cut-out of yourself</dd>
           <dt>E</dt><dd>talk, open, trade</dd>
         </dl>
         <dl class="keys" id="keys-touch" hidden>
