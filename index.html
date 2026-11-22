@@ -8,7 +8,7 @@
   /* Layout: full-bleed 3D view; HUD is marker-on-cardboard labels pinned to the corners. */
   :root {
     --kraft: #c9a26b; --kraft-deep: #a37c48; --ink: #2a2018; --paper: #fff6e3;
-    --water: #3aa0ff; --soak: #5a6fd6; --tape: #f2e3b8; --alarm: #e2553f; --sky: #dcc096;
+    --water: #3aa0ff; --soak: #5a6fd6; --tape: #f2e3b8; --alarm: #e2553f; --sky: #2b2749;
     --display: "Permanent Marker", "Marker Felt", "Comic Sans MS", cursive;
     --body: "Patrick Hand", "Comic Sans MS", "Trebuchet MS", sans-serif;
     color-scheme: light;
@@ -23,6 +23,8 @@
   #ui > * { position: absolute; }
   .label { background: var(--kraft); border: 2px solid var(--ink); border-radius: 3px; box-shadow: 2px 3px 0 rgba(42, 32, 24, .35); padding: 6px 10px; }
 
+  #lock { width: 46px; height: 46px; margin: -23px; border: 3px dashed var(--paper); border-radius: 50%; box-shadow: 0 0 0 2px var(--ink); animation: spin 4s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   #cross { left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: var(--paper); border: 1.5px solid var(--ink); }
   #stats { left: max(16px, env(safe-area-inset-left, 0px)); bottom: 14px; width: min(230px, 46vw); display: grid; gap: 6px; transform: rotate(-1.2deg); }
   .bar { height: 14px; border: 2px solid var(--ink); background: var(--paper); border-radius: 2px; overflow: hidden; }
@@ -43,7 +45,7 @@
   #targets { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
   #targets button { font: inherit; font-size: 16px; color: var(--ink); background: var(--paper); border: 2px solid var(--ink); padding: 3px 9px; border-radius: 3px; cursor: pointer; }
   #targets button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
-  #b-decoy { right: max(176px, env(safe-area-inset-right, 0px)); bottom: 118px; }
+  #b-decoy { right: max(174px, env(safe-area-inset-right, 0px)); bottom: 204px; }
   #compass { left: max(16px, env(safe-area-inset-left, 0px)); top: 12px; display: flex; gap: 8px; align-items: center; font-size: 16px; }
   #needle { width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 18px solid var(--alarm); }
   #prompt { left: 50%; top: 60%; transform: translateX(-50%); pointer-events: auto; cursor: pointer; font: inherit; font-size: 20px; color: var(--ink); background: var(--tape); white-space: nowrap; }
@@ -82,11 +84,11 @@
   #shop button:not(:disabled):hover { background: var(--tape); }
 
   #touch { inset: 0; }
-  #touch button { position: absolute; pointer-events: auto; width: 64px; height: 64px; border-radius: 50%; border: 2px solid var(--ink); background: rgba(255, 246, 227, .6); font: 15px var(--body); color: var(--ink); touch-action: none; }
-  #b-fire { right: max(22px, env(safe-area-inset-right, 0px)); bottom: 84px; width: 84px !important; height: 84px !important; background: rgba(58, 160, 255, .65) !important; }
-  #b-jump { right: max(118px, env(safe-area-inset-right, 0px)); bottom: 62px; }
-  #b-block { right: max(26px, env(safe-area-inset-right, 0px)); bottom: 182px; }
-  #b-balloon { right: max(102px, env(safe-area-inset-right, 0px)); bottom: 150px; }
+  #touch button { position: absolute; pointer-events: auto; width: 60px; height: 60px; border-radius: 50%; border: 2px solid var(--ink); background: rgba(255, 246, 227, .6); font: 15px var(--body); color: var(--ink); touch-action: none; }
+  #b-fire { right: max(22px, env(safe-area-inset-right, 0px)); bottom: 84px; width: 104px !important; height: 104px !important; font-size: 19px !important; background: rgba(58, 160, 255, .65) !important; }
+  #b-jump { right: max(140px, env(safe-area-inset-right, 0px)); bottom: 62px; }
+  #b-block { right: max(26px, env(safe-area-inset-right, 0px)); bottom: 204px; }
+  #b-balloon { right: max(100px, env(safe-area-inset-right, 0px)); bottom: 204px; }
   #stick { width: 96px; height: 96px; border-radius: 50%; border: 2px dashed rgba(42, 32, 24, .6); margin: -48px; }
   @media (prefers-reduced-motion: reduce) { .toast, #flags i.carried { animation-duration: 0.01s; } #fade, #card { transition: none; } }
 </style>
@@ -96,10 +98,10 @@
   <div id="ui">
     <div id="wetflash"></div>
     <div id="cross" hidden></div>
+    <div id="lock" hidden></div>
     <div id="compass" class="label" hidden><div id="needle"></div><span id="goal">Treehouse</span></div>
     <div id="pack" class="label" hidden>
-      <span id="flags" title="Tribe flags"><i></i><i></i><i></i></span>
-      <span id="pools" title="Who holds each pool"><i></i><i></i><i></i><i></i><i></i></span>
+      <span>notes <b id="notes">0/10</b></span>
       <span>caps <b id="caps">0</b></span><span>boxes <b id="boxes">0</b></span><span>balloons <b id="balloons">0</b></span><span>cut-outs <b id="decoys">0</b></span>
     </div>
     <div id="stats" class="label" hidden>
@@ -121,12 +123,9 @@
 
     <div id="market" hidden>
       <div class="panel">
-        <span class="tape">Treehouse base</span>
-        <h2>War map</h2>
-        <p>Pick where the compass points before you head out.</p>
-        <div id="targets"></div>
+        <span class="tape">Through the slot</span>
         <h2>Caps for stuff</h2>
-        <p>You have <b id="mcaps">0</b> banked bottle caps. Caps in your pocket only count once you carry them up here.</p>
+        <p>You have <b id="mcaps">0</b> bottle caps. A hand takes them through the slot. You don't see whose.</p>
         <div id="shop"></div>
         <button class="big" id="market-close">Back to it</button>
       </div>
@@ -136,8 +135,8 @@
       <div class="panel">
         <span class="tape">Milo's house, after school</span>
         <h1>Cardboard City</h1>
-        <p>Milo's dad is never home. His big brother says he's in the backyard. Behind the back door there is a pile of boxes, and inside the pile there is a whole city.</p>
-        <p>Water melts cardboard, so any wall can be a door. Hold the pools, raid the forts, and carry three flags home to the Treehouse.</p>
+        <p>Milo's dad is never home. His big brother says he's in the backyard. Behind the back door there is a pile of boxes, and inside the pile it is nearly dark, and much bigger than a backyard.</p>
+        <p>Milo isn't answering. He left notes. Water melts cardboard, so any wall can be a door.</p>
         <div class="btns">
           <button class="big" id="start-intro">Knock on the door</button>
           <button class="big alt" id="start-skip">Skip to the city</button>
@@ -151,8 +150,10 @@
           <dt>E</dt><dd>talk, open, trade</dd>
         </dl>
         <dl class="keys" id="keys-touch" hidden>
-          <dt>Left thumb</dt><dd>walk</dd>
-          <dt>Right thumb</dt><dd>look. Hold squirt and drag to aim.</dd>
+          <dt>Left thumb</dt><dd>walk. The camera turns with you.</dd>
+          <dt>Squirter</dt><dd>fires by itself at any kid you face</dd>
+          <dt>Squirt button</dt><dd>hold it facing a wall to melt a door</dd>
+          <dt>Right thumb</dt><dd>drag to look around, if you want to</dd>
         </dl>
       </div>
     </div>

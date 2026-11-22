@@ -133,9 +133,9 @@ function bubble(text) {
 }
 
 const pick = a => a[Math.floor(Math.random() * a.length)];
-const SEE = ['GET THEM!', 'INTRUDER!', 'SOAK EM!', 'THIS IS OUR STREET!', 'FIRE!', 'YOU\'RE TOAST!'];
+const SEE = ['YOU\'RE NEW.', 'NOBODY LEAVES!', 'SOAK EM!', 'IT\'S NOT DINNER YET!', 'WHO LET YOU IN?', 'GET THEM!'];
 const OUCH = ['HEY!', 'COLD!!', 'NO FAIR!', 'MY SOCKS!'];
-const BYE = ['I\'M TELLING!', 'TIME OUT!', 'I\'M SOAKED!', 'REMATCH!!'];
+const BYE = ['I\'M TELLING!', 'TIME OUT!', 'I WANT TO GO HOME', 'WHAT DAY IS IT?'];
 
 class Actor {
   constructor(game, group, x, z, r, h) {
@@ -278,7 +278,7 @@ export class Kid extends Actor {
     this.wet += amount;
     if (Math.random() < 0.25) this.say(pick(OUCH), 1);
     if (this.wet >= 100) {
-      this.say(pick(BYE), 2); this.out = 14; this.outAnim = 1.6; this.vel.set(0, 0, 0);
+      this.say(pick(BYE), 2); this.out = this.noRespawn ? Infinity : 14; this.outAnim = 1.6; this.vel.set(0, 0, 0);
       this.game.kidSoaked(this, byPlayer);
     }
   }

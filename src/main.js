@@ -1,9 +1,10 @@
 // Cardboard City: you visit a friend, walk through his wrecked house, and find a city in the backyard.
 import * as THREE from '../vendor/three.module.min.js';
-import { World, generate, PLACES, T, CITY, SY } from './world.js';
+import { World, generate, PLACES, LEVEL, districtAt, T, CITY, SY } from './world.js';
 import { Kid, Animal, makeKid, moveActor, JUMP, WATER_GRAV } from './actors.js';
 
 const $ = id => document.getElementById(id);
+const STORY = true; // the linear adventure. The open-world tribe systems are still in here but switched off.
 const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const TOUCH = matchMedia('(pointer: coarse)').matches;
@@ -18,7 +19,8 @@ camera.rotation.order = 'YXZ';
 scene.add(camera);
 // Late-afternoon sun with real shadows: boxes need shade to read as a city rather than a grid.
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-scene.add(new THREE.HemisphereLight(0xfff1d6, 0x9a8468, 1.2));
+const hemi = new THREE.HemisphereLight(0xfff1d6, 0x9a8468, 1.2); scene.add(hemi);
+const torch = new THREE.SpotLight(0xfff0c8, 0, 34, 0.5, 0.7, 0.45); scene.add(torch, torch.target); // your flashlight
 const sun = new THREE.DirectionalLight(0xfff0d8, 2.3);
 const SUN_DIR = V3(0.38, 0.9, 0.24).normalize(); // high enough to drop light into the alleys
 sun.castShadow = true; sun.shadow.mapSize.set(TOUCH ? 1024 : 2048, TOUCH ? 1024 : 2048);
@@ -51,15 +53,18 @@ flat(500, 500, 64, 112, 0xffffff, 0, lawnTexture());
 flat(15, 15, 64.5, 204.5, 0xb89468, 0.01);  // house floor
 flat(3, 11, 64.5, 218.5, 0xbdb7ab, 0.01);   // front path
 
+// Outside it is a late afternoon. Inside the pile it is always dusk.
 const ENV = {
-  yard: { color: 0xa9d6ee, near: 25, far: 62 },
-  city: { color: 0xdcc096, near: 9, far: 50 },
+  yard: { color: 0xa9d6ee, near: 25, far: 62, sky: 0xfff1d6, ground: 0x9a8468, hemi: 1.2, sun: 0xfff0d8, sunI: 2.3, torch: 0 },
+  city: { color: 0x2b2749, near: 4, far: 46, sky: 0x9296dc, ground: 0x4d4258, hemi: 1.0, sun: 0xb4bcff, sunI: 0.8, torch: 3.2 },
 };
 let viewDist = 50;
 function setEnv(name) {
   const e = ENV[name];
   scene.fog.color.setHex(e.color); scene.background.setHex(e.color);
   scene.fog.near = e.near; scene.fog.far = e.far; viewDist = e.far;
+  hemi.color.setHex(e.sky); hemi.groundColor.setHex(e.ground); hemi.intensity = e.hemi;
+  sun.color.setHex(e.sun); sun.intensity = e.sunI; torch.intensity = e.torch;
 }
 
 // ------------------------------------------------------------------ particles (water, balloons, soggy bits)
@@ -175,7 +180,7 @@ const player = {
 
 const game = {
   scene, world, fx, player, soggyBlue, sfx,
-  mode: 'menu', time: 0, actors: [player], items: [], flags: [], pools: [], allies: [], broken: [], goalSel: null, stage: 0, graceT: 0, flash: 0, won: false, marketOpen: false,
+  mode: 'menu', time: 0, guards: [], notes: [], lamps: [], notesRead: 0, district: -1, checkpoint: null, lock: null, ended: false, actors: [player], items: [], flags: [], pools: [], allies: [], broken: [], goalSel: null, stage: 0, graceT: 0, flash: 0, won: false, marketOpen: false,
   nearPlayer(p, d) { const dx = p.x - player.pos.x, dz = p.z - player.pos.z; return dx * dx + dz * dz < d * d; },
   freeSpot(x, z, range, avoid = 0) {
     for (let n = 0; n < 80; n++) {
@@ -224,9 +229,9 @@ const game = {
   playerSoaked() {
     const lost = player.pocket; player.pocket = 0;
     for (const f of game.flags) if (f.state === 'carried') { f.state = 'home'; f.mesh.visible = true; }
-    toast(`Soaked through. You squelch back to the Treehouse${lost ? ` and the ${lost} caps in your pockets are gone` : ''}.`);
+    toast('Soaked through. You wake up at the last pool, dry. You don\'t remember walking there.');
     fade(() => {
-      player.pos.set(PLACES.respawn.x, 0, PLACES.respawn.z); player.vel.set(0, 0, 0); player.yaw = Math.PI / 2; player.pitch = 0;
+      const c = game.checkpoint || PLACES.citySpawn; player.pos.set(c.x, 0, c.z); player.vel.set(0, 0, 0); player.pitch = 0;
       player.wetness = 0; player.water = Math.max(player.water, player.tank / 2);
     });
     game.graceT = 4;
@@ -374,39 +379,64 @@ function prop(parent, geo, mat, w, h, d, x, y, z, rx = 0, ry = 0, rz = 0) {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(w, len), new THREE.MeshLambertMaterial({ map: t }));
     m.rotation.set(-Math.PI / 2, 0, turn ? Math.PI / 2 : 0); m.position.set(x, 0.036, z); m.receiveShadow = true; scene.add(m);
   };
-  strip(4, 49, 65, 101.5, false); strip(2, 112, 64, 89, true);
+  strip(4, 22, 65, 115, false);
 
   // parked cars: boxes with wheels drawn on. You can climb on them but not walk through them.
   const paintJob = [0xd9483b, 0x2f7fb5, 0xe8c74a, 0x3fa35c, 0xe07b39].map(lam), tyre = lam(0x1f1b1a), glass = lam(0xbfe0ee);
-  [[63, 79, 0], [66, 83, 1], [63, 93, 2], [66, 98, 3], [63, 104, 4], [30, 88, 1], [100, 88, 0]].forEach(([x, z, c]) => {
-    const along = x === 63 || x === 66, g = new THREE.Group(); g.position.set(along ? x + 0.5 : x + 1.5, 0, along ? z + 1.5 : z + 0.5);
-    if (!along) g.rotation.y = Math.PI / 2;
-    g.rotation.z = (c - 2) * 0.012;
-    prop(g, unitBox, paintJob[c], 0.96, 0.62, 2.9, 0, 0.56, 0); prop(g, unitBox, paintJob[c], 0.9, 0.5, 1.4, 0, 1.1, 0.15);
+  LEVEL.cars.forEach(([x, z], c) => {
+    const g = new THREE.Group(); g.position.set(x + 0.5, 0, z + 1.5); g.rotation.z = (c - 2) * 0.012;
+    prop(g, unitBox, paintJob[c % 5], 0.96, 0.62, 2.9, 0, 0.56, 0); prop(g, unitBox, paintJob[c % 5], 0.9, 0.5, 1.4, 0, 1.1, 0.15);
     prop(g, unitBox, glass, 0.92, 0.36, 1.1, 0, 1.12, 0.15); prop(g, unitBox, glow(0xfff2b0), 0.7, 0.14, 0.04, 0, 0.62, -1.46);
     for (const [wx, wz] of [[-0.5, -0.95], [0.5, -0.95], [-0.5, 0.95], [0.5, 0.95]]) prop(g, tubeGeo, tyre, 0.62, 0.1, 0.62, wx, 0.31, wz, 0, 0, Math.PI / 2);
     scene.add(g);
-    for (let k = 0; k < 3; k++) world.set(along ? x : x + k, 0, along ? z + k : z, T.GHOST);
+    for (let k = 0; k < 3; k++) world.set(x, 0, z + k, T.GHOST);
   });
 
-  // streetlights from wrapping-paper tubes, a traffic light, hydrants, a mailbox
-  const tubeMat = lam(0xb89460), dark = lam(0x2a2422);
-  for (const [x, z] of [[62.75, 81], [67.25, 87], [62.75, 96], [67.25, 102], [62.75, 110], [67.25, 118], [40, 87.75], [88, 90.25], [110, 87.75], [18, 90.25]]) {
-    const dir = x < 63 ? 1 : x > 67 ? -1 : 0, dz = dir ? 0 : (z < 89 ? 1 : -1);
-    prop(scene, tubeGeo, tubeMat, 0.13, 3.8, 0.13, x, 1.9, z); prop(scene, unitBox, tubeMat, dir ? 0.9 : 0.1, 0.1, dir ? 0.1 : 0.9, x + dir * 0.4, 3.75, z + dz * 0.4);
-    prop(scene, unitBox, glow(0xfff0a8), 0.34, 0.24, 0.34, x + dir * 0.8, 3.6, z + dz * 0.8);
+  // streetlights along the route. In Lights Out most of them are dead.
+  const tubeMat = lam(0x8f7650), dark = lam(0x2a2422);
+  const halo = paint(64, 64, g => { const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, 'rgba(255,225,150,1)'); r.addColorStop(0.3, 'rgba(255,200,110,.45)'); r.addColorStop(1, 'rgba(255,190,90,0)'); g.fillStyle = r; g.fillRect(0, 0, 64, 64); });
+  for (const l of LEVEL.lamps) {
+    prop(scene, tubeGeo, tubeMat, 0.13, 3.8, 0.13, l.x, 1.9, l.z);
+    prop(scene, unitBox, tubeMat, 0.1 + Math.abs(l.dx) * 0.8, 0.1, 0.1 + Math.abs(l.dz) * 0.8, l.x + l.dx * 0.4, 3.75, l.z + l.dz * 0.4);
+    const hx = l.x + l.dx * 0.8, hz = l.z + l.dz * 0.8;
+    const bulb = prop(scene, unitBox, new THREE.MeshBasicMaterial({ color: l.dead ? 0x4a4338 : 0xffe9a0 }), 0.34, 0.24, 0.34, hx, 3.6, hz); bulb.castShadow = false;
+    if (l.dead) continue;
+    const sm = new THREE.SpriteMaterial({ map: halo, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
+    const sp = new THREE.Sprite(sm); sp.position.set(hx, 3.5, hz); sp.scale.set(4.5, 4.5, 1); scene.add(sp);
+    const pm = new THREE.MeshBasicMaterial({ map: halo, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.55 });
+    const pool = new THREE.Mesh(unitPlane, pm); pool.rotation.x = -Math.PI / 2; pool.position.set(hx, 0.06, hz); pool.scale.set(8, 8, 1); scene.add(pool);
+    game.lamps.push({ sm, pm, bulb, seed: game.lamps.length * 7.3, flicker: game.lamps.length % 5 === 2 });
   }
-  prop(scene, tubeGeo, tubeMat, 0.13, 3, 0.13, 62.6, 1.5, 90.4); prop(scene, unitBox, dark, 0.36, 1, 0.3, 62.6, 3.4, 90.4);
-  [0xe2553f, 0xf2c94a, 0x3fa35c].forEach((c, i) => prop(scene, tubeGeo, glow(c), 0.22, 0.04, 0.22, 62.6, 3.72 - i * 0.3, 90.24, Math.PI / 2));
-  for (const [x, z] of [[67.3, 92.5], [62.7, 107], [77.5, 108.5], [56, 78.5], [92, 87.7]]) {
-    prop(scene, tubeGeo, lam(0xd9483b), 0.3, 0.55, 0.3, x, 0.28, z); prop(scene, tubeGeo, lam(0xd9483b), 0.2, 0.16, 0.2, x, 0.63, z); prop(scene, tubeGeo, lam(0xb93a2f), 0.14, 0.44, 0.14, x, 0.36, z, 0, 0, Math.PI / 2);
+  // chalk arrows on the ground, in case you get turned around
+  const chalk = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.5, depthWrite: false, map: paint(64, 128, g => {
+    g.strokeStyle = '#f4ead2'; g.lineWidth = 9; g.lineCap = 'round'; g.lineJoin = 'round';
+    g.beginPath(); g.moveTo(32, 118); g.lineTo(32, 16); g.moveTo(10, 46); g.lineTo(32, 14); g.lineTo(54, 46); g.stroke();
+  }) });
+  for (const a of LEVEL.arrows) { const m = new THREE.Mesh(unitPlane, chalk); m.rotation.set(-Math.PI / 2, a.yaw, 0, 'YXZ'); m.position.set(a.x, 0.045, a.z); m.scale.set(0.8, 1.6, 1); scene.add(m); }
+  // vending boxes by each pool: somebody trades caps through the slot. You never see who.
+  for (const v of LEVEL.vendors) {
+    prop(scene, unitBox, lam(0xa9743f), 1.1, 2, 0.8, v.x, 1, v.z); prop(scene, unitBox, glow(0xffd98a), 0.7, 0.16, 0.05, v.x, 1.05, v.z + 0.41);
+    prop(scene, unitPlane, signMat('CAPS FOR STUFF', true), 1.05, 0.4, 1, v.x, 1.6, v.z + 0.42).castShadow = false;
+    world.set(Math.floor(v.x), 0, Math.floor(v.z), T.GHOST); world.set(Math.floor(v.x), 1, Math.floor(v.z), T.GHOST);
   }
-  prop(scene, tubeGeo, tubeMat, 0.1, 0.8, 0.1, 67.3, 0.4, 112); prop(scene, unitBox, lam(0x2f5fb5), 0.5, 0.5, 0.4, 67.3, 1, 112);
-
-  // a lemonade stand by the South pool
-  const stand = new THREE.Group(); stand.position.set(69.5, 0, 107.2); scene.add(stand);
-  prop(stand, unitBox, tubeMat, 2.2, 0.9, 0.7, 0, 0.45, 0); prop(stand, tubeGeo, tubeMat, 0.08, 2.4, 0.08, -1, 1.2, 0); prop(stand, tubeGeo, tubeMat, 0.08, 2.4, 0.08, 1, 1.2, 0);
-  prop(stand, unitPlane, signMat('LEMONADE 5¢', true), 2.2, 0.75, 1, 0, 2.2, 0.06); prop(stand, tubeGeo, lam(0xf2c94a), 0.3, 0.34, 0.3, 0.5, 1.07, 0);
+  // signs over the gates
+  LEVEL.gates.forEach((g, i) => {
+    const along = g.x1 > g.x0, t = signMat(LEVEL.districts[i + 1].name.toUpperCase(), true);
+    for (const s of [-1, 1]) prop(scene, unitPlane, t, 3.4, 1.2, 1, g.x + (along ? 0 : s * 0.56), 4.1, g.z + (along ? s * 0.56 : 0), 0, along ? (s > 0 ? 0 : Math.PI) : s * Math.PI / 2).castShadow = false;
+  });
+  // Milo's notes: pages torn from a school notebook, stuck on sticks
+  const page = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, map: paint(128, 96, g => {
+    g.fillStyle = '#fff6d8'; g.fillRect(0, 0, 128, 96); g.strokeStyle = '#9fc0e8'; g.lineWidth = 2;
+    for (let y = 22; y < 96; y += 14) { g.beginPath(); g.moveTo(0, y); g.lineTo(128, y); g.stroke(); }
+    g.strokeStyle = '#3b3b6b'; g.lineWidth = 3; for (let y = 28; y < 84; y += 14) { g.beginPath(); g.moveTo(12, y); g.lineTo(60 + (y * 7) % 50, y + 1); g.stroke(); }
+  }) });
+  LEVEL.notes.forEach((n, i) => {
+    const g = new THREE.Group(); g.position.set(n.x, 0, n.z); scene.add(g);
+    prop(g, tubeGeo, tubeMat, 0.05, 1, 0.05, 0, 0.5, 0); const m = prop(g, unitPlane, page, 0.6, 0.45, 1, 0, 1.15, 0); m.castShadow = false;
+    game.notes.push({ ...n, i, g, read: false });
+  });
+  { const g = new THREE.Group(); g.position.set(PLACES.crate.x + 0.9, 0, PLACES.crate.z); scene.add(g); // the crate with his spare squirter on it
+    prop(g, unitBox, tubeMat, 0.8, 0.6, 0.8, 0, 0.3, 0); game.spare = [prop(g, unitBox, lam(0x35c46a), 0.12, 0.12, 0.42, 0, 0.67, 0), prop(g, unitBox, lam(0xff8a2a), 0.14, 0.14, 0.2, 0, 0.78, 0.06)]; }
 
   // planks and bunting strung between the towers, far over your head
   const firsts = towers.filter(t => t.base), plank = lam(0xb98f58), string = lam(0x3a302a), spans = [];
@@ -446,9 +476,9 @@ function prop(parent, geo, mat, w, h, d, x, y, z, rx = 0, ry = 0, rz = 0) {
   });
 
   // the sky: a cardboard sun and clouds hung on strings
-  const hung = (draw, n, size) => {
+  const hung = (draw, n, size, tint) => {
     const map = paint(256, 512, g => { g.strokeStyle = '#3a302a'; g.lineWidth = 3; g.beginPath(); g.moveTo(128, 0); g.lineTo(128, 330); g.stroke(); g.lineJoin = 'round'; draw(g); });
-    const mat = new THREE.SpriteMaterial({ map, fog: false });
+    const mat = new THREE.SpriteMaterial({ map, fog: false, color: tint });
     for (let i = 0; i < n; i++) {
       const sp = new THREE.Sprite(mat), a = i * 2.4 + size, r = 18 + (i * 29) % 50;
       sp.position.set(64 + Math.cos(a) * r, 34 + (i * 13) % 16, 64 + Math.sin(a) * r); sp.scale.set(size, size * 2, 1); skyline.add(sp);
@@ -457,13 +487,13 @@ function prop(parent, geo, mat, w, h, d, x, y, z, rx = 0, ry = 0, rz = 0) {
   hung(g => { // cloud
     g.fillStyle = '#f4ead2'; g.strokeStyle = '#2a2018'; g.lineWidth = 7; g.beginPath();
     g.arc(70, 410, 46, 2, 5); g.arc(118, 370, 52, 3.4, 5.6); g.arc(176, 392, 46, 4.2, 6.6); g.arc(190, 440, 36, 5.6, 8.2); g.lineTo(60, 472); g.closePath(); g.fill(); g.stroke();
-  }, 13, 13);
+  }, 13, 13, 0x8d86b5);
   hung(g => { // sun
     g.fillStyle = '#f2c94a'; g.strokeStyle = '#2a2018'; g.lineWidth = 7;
     for (let i = 0; i < 12; i++) { const a = i * Math.PI / 6; g.beginPath(); g.moveTo(128 + Math.cos(a) * 78, 400 + Math.sin(a) * 78); g.lineTo(128 + Math.cos(a) * 112, 400 + Math.sin(a) * 112); g.stroke(); }
     g.beginPath(); g.arc(128, 400, 66, 0, 7); g.fill(); g.stroke();
     g.fillStyle = '#2a2018'; g.beginPath(); g.arc(106, 388, 6, 0, 7); g.arc(150, 388, 6, 0, 7); g.fill(); g.lineWidth = 5; g.beginPath(); g.arc(128, 404, 30, 0.4, 2.7); g.stroke();
-  }, 1, 26);
+  }, 1, 26, 0xff9d5c); // a sun that never quite sets
 }
 
 // ------------------------------------------------------------------ cardboard cut-out kids
@@ -487,6 +517,7 @@ const standeeMats = [0, 1, 2, 3].map(team => {
   return { face: new THREE.MeshLambertMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide }),
     depth: new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map, alphaTest: 0.5 }) };
 });
+const tmp = V3();
 class Decoy {
   constructor(x, y, z, yaw, team) {
     this.pos = V3(x, y, z); this.r = 0.32; this.h = 1.3; this.team = team; this.wet = 0; this.out = 0; this.fall = 0; this.isDecoy = true; this.dead = false;
@@ -497,7 +528,22 @@ class Decoy {
   targetable() { return this.out <= 0; }
   hit(amount) { if (this.out > 0) return; this.wet += amount; if (this.wet >= 50) { this.out = 1; sfx('crumble', this.pos); } }
   update(dt) {
-    if (this.out <= 0) return;
+    if (this.out <= 0) {
+      if (this.team === 0 || game.mode !== 'city') return;
+      const dx = player.pos.x - this.pos.x, dz = player.pos.z - this.pos.z, d = Math.hypot(dx, dz);
+      if (d > 40 || d < 0.1) return;
+      // Is the camera looking this way? If not, turn to face you. Some of them take a step.
+      camera.getWorldDirection(tmp);
+      const cx = this.pos.x - camera.position.x, cz = this.pos.z - camera.position.z, cd = Math.hypot(cx, cz) || 1;
+      if ((cx * tmp.x + cz * tmp.z) / cd > 0.3) return;
+      const want = Math.atan2(dx, dz); let diff = want - this.pivot.rotation.y; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      this.pivot.rotation.y += Math.sign(diff) * Math.min(Math.abs(diff), dt * 1.2);
+      if (this.creeper && d > 2 && d < 32) {
+        const nx = this.pos.x + dx / d * dt * 1.7, nz = this.pos.z + dz / d * dt * 1.7;
+        if (!world.solidAt(nx, 0.5, nz) && !world.solidAt(nx, 1.2, nz)) { this.pos.x = nx; this.pos.z = nz; this.pivot.position.copy(this.pos); }
+      }
+      return;
+    }
     this.fall += dt * 2.5; this.pivot.rotation.x = Math.min(1.5, this.fall);
     if (this.fall < 4) return;
     if (this.team === 0) { scene.remove(this.pivot); this.dead = true; return; }
@@ -507,6 +553,7 @@ class Decoy {
   }
 }
 for (const sd of standees) game.actors.push(new Decoy(sd.x, 0, sd.z, sd.yaw, sd.team));
+for (const c of LEVEL.creepers) { const d = new Decoy(c.x, 0, c.z, 0, 2); d.creeper = true; game.actors.push(d); }
 
 // ------------------------------------------------------------------ things in the world
 const capGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.05, 8);
@@ -585,10 +632,10 @@ function setPoolOwner(pool, team) {
     const k = game.allies.find(a => a.post === pool); if (k) { k.post = null; k.home = k.base; k.goal = null; }
   }
 }
-postAlly(game.pools[0], true);
 
 // ---- territory: stand in a pool with nobody else's side around and it becomes yours
 function updatePools(dt) {
+  if (STORY) return; // in the story, pools are just checkpoints
   let showing = null;
   for (const pool of game.pools) {
     let mask = 0, one = -1;
@@ -637,6 +684,7 @@ function director(dt) {
 // Tribes re-tape the walls you melted, unless you're standing there or you hold the pool nearby.
 let rebuildT = 0;
 function rebuild(dt) {
+  if (STORY) return;
   if ((rebuildT -= dt) > 0 || game.mode !== 'city') return;
   rebuildT = 0.4;
   const B = game.broken;
@@ -651,16 +699,19 @@ function rebuild(dt) {
 }
 
 const brother = addActor(new Kid(game, { team: -1, still: true, costume: 'brother', shirt: 0x6b6b7a, pants: 0x2f2f38, scale: 1.45, gun: false, x: 63.1, z: 210.4, yaw: Math.PI }));
-const milo = addActor(new Kid(game, { team: -1, still: true, costume: 'cape', shirt: 0x35a7c4, x: PLACES.friend.x, z: PLACES.friend.z, yaw: Math.PI }));
+const milo = addActor(new Kid(game, { team: -1, still: true, costume: 'cape', shirt: 0x35a7c4, x: 66.5, z: 66.5, yaw: -Math.PI / 2, gun: false }));
+milo.pos.y = 7.05;
 const keeper = addActor(new Kid(game, { team: -1, still: true, costume: 'apron', shirt: 0xe07b39, gun: false, x: PLACES.shop.x, z: PLACES.shop.z, yaw: -Math.PI / 2 }));
 keeper.pos.y = 7.05; keeper.say('CAPS FOR STUFF', 1e9);
-for (const [x, z, c] of [[66.5, 68.5, 0xd96aa0], [68.5, 60.5, 0x58a56e]]) {
-  const k = addActor(new Kid(game, { team: -1, still: true, costume: 'none', shirt: c, gun: false, x, z })); k.pos.y = 7.05;
-}
 const animalAt = (kind, x, z, r = 6) => { const s = game.freeSpot(x, z, r); addActor(new Animal(game, kind, s.x, s.z)); };
-animalAt('dog', 66, 108); animalAt('dog', 92, 90);
-animalAt('cat', 50, 96); animalAt('cat', 82, 40); animalAt('cat', 40, 44); animalAt('cat', 70, 80);
-animalAt('goose', 34, 62, 3); animalAt('goose', 62, 30, 3); animalAt('goose', 102, 102, 3); animalAt('goose', 96, 64, 3);
+animalAt('dog', 64, 114, 3);
+animalAt('cat', 40, 112); animalAt('cat', 12, 60); animalAt('cat', 60, 14); animalAt('cat', 110, 40);
+animalAt('goose', 17, 78, 3); animalAt('goose', 112, 50, 3); animalAt('goose', 84, 57, 3);
+// the kids who hold each gate. Soak one and they're gone for good.
+for (const gd of LEVEL.guards) {
+  const k = addActor(new Kid(game, { ...COSTUME[gd.team], team: gd.team, x: gd.x, z: gd.z }));
+  k.noRespawn = true; k.range = 4; k.district = gd.district; game.guards.push(k);
+}
 
 // you, seen from over your shoulder
 const avatar = makeKid({ shirt: 0x2f6fd0, pants: 0x4a4038, costume: 'none' });
@@ -684,6 +735,8 @@ function updateCamera(dt) {
   CAM.cur = want < CAM.cur ? want : Math.min(want, CAM.cur + dt * 5);
   camera.position.copy(pivot).addScaledVector(back, CAM.cur);
   camera.rotation.set(player.pitch, player.yaw, 0);
+  torch.position.set(p.x - sy * 0.3, p.y + 1.15, p.z - cy * 0.3);
+  torch.target.position.copy(torch.position).addScaledVector(back, -10);
 
   const u = avatar.userData, sp = Math.hypot(player.vel.x, player.vel.z);
   avatar.visible = CAM.cur > 0.9; avatar.position.copy(p); avatar.rotation.y = player.yaw;
@@ -740,18 +793,60 @@ function enterCity(instant) {
     player.pos.set(PLACES.citySpawn.x, 0, PLACES.citySpawn.z); player.vel.set(0, 0, 0); player.yaw = 0; player.pitch = 0;
     subs.length = 0; subT = 0;
     showHud(); titleCard('Cardboard City', 'It was a pile of boxes a second ago.');
+    say('', 'It is bigger in here than the whole backyard. And later. The sky is the colour of almost dinner time.', 5);
+    say('', 'No Milo. There is something on a box up ahead.', 3.5);
   };
   if (instant) { initAudio(); go(); canvas.focus(); } else fade(go);
 }
-function meetMilo() {
-  game.stage = 3;
-  say('Milo', 'You made it! Dad\'s at work till, like, forever. So we built this.');
-  say('Milo', 'Take my spare squirter. Water melts cardboard, so any wall is a door if you want it to be.', 4.5);
-  say('Milo', 'The Treehouse is our base. Fill up there, bank your caps, pick a target on the war map.', 4.5);
-  say('Milo', 'Pools are everything. Hold a pool and you can fight around it. Lose it and you walk home dry.', 4.5);
-  say('Milo', 'Three tribes, three flags. Plant all three in our yard and the city is ours. They will come to take them back.', 5);
-  player.hasGun = true; player.water = player.tank; sfx('pick');
-  toast('Got a squirter. Hold click to spray.');
+function readNote(n) {
+  n.read = true; n.g.visible = false; game.notesRead++; sfx('pick');
+  say('Milo\'s note', n.text, 3.5 + n.text.length * 0.045);
+  if (n.i === 0) {
+    game.stage = 3; player.hasGun = true; player.water = player.tank; for (const m of game.spare) m.visible = false;
+    toast(TOUCH ? 'Got a squirter. It fires by itself at kids you face. Hold squirt for walls.' : 'Got a squirter. Hold click to spray. Walls melt.');
+  }
+}
+// What each district says to you as you walk in, and as its gate gives way.
+const ARRIVE = [
+  'A wall of taped boxes shuts the street. Somebody has drawn windows on everything.',
+  'The alleys squeeze in. The cut-outs here have faces. You are fairly sure that one was looking the other way.',
+  'No pools in this part. Somewhere far above the clouds, somebody is playing music.',
+  'The streetlights are dead past the gate. Your flashlight is not very big.',
+  'A real tree. Real wood. It is the only thing in here that was not made by a kid.',
+];
+const OPENED = [
+  'The last Knight runs off. The gate swings open by itself. Nobody is behind it.',
+  'The Pirates are gone. On the gate somebody has written a date. It is next Thursday.',
+  'The Scouts scatter. Far overhead a voice says "...ten minutes!" The clouds sway a little.',
+  'The night shift is over. The tube through the wall is open, and there is light at the end of it.',
+];
+function storyTick() {
+  const p = player.pos;
+  for (const n of game.notes) if (!n.read) {
+    n.g.rotation.y += 0.02;
+    if (Math.hypot(n.x - p.x, n.z - p.z) < 1.7 && Math.abs(p.y) < 2) readNote(n);
+  }
+  const d = districtAt(p.x, p.z);
+  if (d !== game.district) {
+    game.district = d;
+    if (d > 0 || game.stage >= 3) { titleCard(LEVEL.districts[d].name, '', 2.6); say('', ARRIVE[d], 5); }
+  }
+  LEVEL.gates.forEach((g, i) => {
+    if (g.open || game.stage < 3 || game.guards.some(k => k.district === g.district && k.out <= 0)) return;
+    g.open = true; for (let y = 0; y < 3; y++) for (let z = g.z0; z <= g.z1; z++) for (let x = g.x0; x <= g.x1; x++) world.set(x, y, z, T.AIR);
+    sfx('win'); say('', OPENED[i], 5.5);
+  });
+  if (player.safe && !game.ended) {
+    game.ended = true;
+    subs.length = 0; subT = 0;
+    say('Milo', 'You came! ...What day is it?', 3.5);
+    say('Milo', 'I\'ve been here since Tuesday. I think. They keep building. It was a pile of boxes on Tuesday.', 5.5);
+    say('Milo', 'They made a cut-out of me. Look over there. They\'ve started one of you.', 5);
+    say('Big brother', '(from somewhere above the clouds) DINNER!', 3.5);
+    say('Milo', '...Did you hear that? He says that every day. It is never dinner.', 5);
+    game.actors.push(new Decoy(68.5, 7, 68.5, -2.4, 0));
+    setTimeout(() => titleCard('To be continued', `You found ${game.notesRead} of ${LEVEL.notes.length} notes.`, 8), 20000);
+  }
 }
 
 function interaction() {
@@ -767,7 +862,7 @@ function interaction() {
       say('', 'The backyard. A mountain of cardboard boxes. One of them has a hole in the front, kid sized.', 4.5);
     } };
   } else if (game.mode === 'city') {
-    if (player.safe && near(PLACES.shop.x, PLACES.shop.z, 3.4)) return { label: 'Trade bottle caps', fn: openMarket };
+    if (LEVEL.vendors.some(v => near(v.x, v.z, 2.7)) || (player.safe && near(PLACES.shop.x, PLACES.shop.z, 3.4))) return { label: 'Trade bottle caps', fn: openMarket };
   }
   return null;
 }
@@ -805,7 +900,7 @@ function renderTargets() {
     return b;
   }));
 }
-function openMarket() { game.marketOpen = true; $('market').hidden = false; renderShop(); renderTargets(); if (document.pointerLockElement) document.exitPointerLock(); input.fire = false; }
+function openMarket() { game.marketOpen = true; $('market').hidden = false; renderShop(); if (document.pointerLockElement) document.exitPointerLock(); input.fire = false; }
 function closeMarket() { game.marketOpen = false; $('market').hidden = true; canvas.focus(); }
 $('market-close').onclick = closeMarket;
 
@@ -851,7 +946,7 @@ if (TOUCH) {
     if (!firing && stickId === null && e.clientX < innerWidth * 0.42) {
       stickId = e.pointerId; sx = e.clientX; sy = e.clientY;
       const r = $('ui').getBoundingClientRect(); stick.style.left = sx - r.left + 'px'; stick.style.top = sy - r.top + 'px'; stick.hidden = false;
-    } else looks.set(e.pointerId, { x: e.clientX, y: e.clientY, firing });
+    } else { looks.set(e.pointerId, { x: e.clientX, y: e.clientY, firing }); input.looking = true; }
     if (firing) input.fire = true;
   };
   canvas.addEventListener('pointerdown', e => down(e, false));
@@ -863,7 +958,7 @@ if (TOUCH) {
   });
   const up = e => {
     if (e.pointerId === stickId) { stickId = null; input.mx = input.mz = 0; stick.hidden = true; }
-    const l = looks.get(e.pointerId); if (l) { if (l.firing) input.fire = false; looks.delete(e.pointerId); }
+    const l = looks.get(e.pointerId); if (l) { if (l.firing) input.fire = false; looks.delete(e.pointerId); input.looking = looks.size > 0; }
   };
   addEventListener('pointerup', up); addEventListener('pointercancel', up);
   $('b-jump').addEventListener('pointerdown', e => { e.preventDefault(); input.keys.add('Space'); setTimeout(() => input.keys.delete('Space'), 200); });
@@ -877,19 +972,45 @@ $('start-skip').onclick = () => enterCity(true);
 // ------------------------------------------------------------------ player actions
 const fwd = V3(), eye = V3();
 // Aim where the crosshair points, but shoot from the squirter in your hand.
-let aimDist = 20;
+let aimDist = 20, flip = false;
+const yawDiff = (dx, dz) => { const d = Math.atan2(-dx, -dz) - player.yaw; return Math.atan2(Math.sin(d), Math.cos(d)); };
+// The kid you are roughly facing. On a phone this cone is wide and the squirter fires at them by itself.
+function findLock() {
+  const p = player.pos, cone = TOUCH ? 0.7 : 0.14; let best = null, ba = cone;
+  for (const a of game.actors) {
+    if (a.team <= 0 || a.isDecoy || !a.targetable()) continue;
+    const dx = a.pos.x - p.x, dz = a.pos.z - p.z, d = Math.hypot(dx, dz);
+    if (d > 15 || d < 0.3) continue;
+    const ang = Math.abs(yawDiff(dx, dz)) + d * 0.004;
+    if (ang < ba && world.los(p.x, p.y + 1.2, p.z, a.pos.x, a.pos.y + 0.8, a.pos.z)) { ba = ang; best = a; }
+  }
+  return best;
+}
 function aim() {
   camera.getWorldDirection(fwd);
-  const h = world.raycast(camera.position, fwd, 45, 0.12);
-  aimDist = h ? Math.max(h.dist, CAM.cur + 1.5) : 45;
-  const tx = camera.position.x + fwd.x * aimDist, ty = camera.position.y + fwd.y * aimDist, tz = camera.position.z + fwd.z * aimDist;
   const p = player.pos, sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
+  let tx, ty, tz; const lk = game.lock;
+  if (lk) { tx = lk.pos.x; ty = lk.pos.y + lk.h * 0.6; tz = lk.pos.z; }
+  else {
+    // On a phone, a wall straight ahead gets opened at walking height: one cell at your feet, one above.
+    let door = null;
+    if (TOUCH) {
+      flip = !flip; tmp.set(p.x, p.y + (flip ? 0.5 : 1.5), p.z); back.set(-sy, 0, -cy);
+      const h = world.raycast(tmp, back, 7, 0.1); if (h && world.get(h.x, h.y, h.z) === T.CARD) door = h;
+    }
+    if (door) { tx = door.x + 0.5; ty = door.y + 0.5; tz = door.z + 0.5; }
+    else {
+      const h = world.raycast(camera.position, fwd, 45, 0.12), d = h ? Math.max(h.dist, CAM.cur + 1.5) : 45;
+      tx = camera.position.x + fwd.x * d; ty = camera.position.y + fwd.y * d; tz = camera.position.z + fwd.z * d;
+    }
+  }
   eye.set(p.x - sy * 0.4 + cy * 0.28, p.y + 0.95, p.z - cy * 0.4 - sy * 0.28);
   fwd.set(tx - eye.x, ty - eye.y, tz - eye.z); aimDist = fwd.length(); fwd.normalize();
 }
 let fireAcc = 0, emptyT = 0;
 function squirt(dt) {
-  if (!input.fire && !input.keys.has('KeyF')) { fireAcc = 0; return; }
+  const auto = TOUCH && game.lock && player.water > 0 && !player.safe;
+  if (!input.fire && !input.keys.has('KeyF') && !auto) { fireAcc = 0; return; }
   if (!player.hasGun || game.mode !== 'city') return;
   if (player.safe) { toast('No squirting in the Treehouse. That\'s the rule.'); return; }
   if (player.water <= 0) { if ((emptyT -= dt) <= 0) { emptyT = 0.4; sfx('empty'); toast('Tank\'s empty. Find a kiddie pool.'); } return; }
@@ -950,20 +1071,21 @@ function updatePlayer(dt) {
   player.sinceHit += dt; game.graceT -= dt;
   const wasSafe = player.safe;
   player.safe = game.mode === 'city' && p.y >= 6.9 && p.x > 57 && p.x < 72 && p.z > 57 && p.z < 72;
-  if (player.safe && !wasSafe) {
-    const n = player.pocket; player.caps += n; player.pocket = 0;
-    toast(n ? `Back at base. Banked ${n} caps.` : 'Back at base. Real wood: water can\'t touch it, and nobody fights up here.');
-    if (n) sfx('pick');
-  }
   if (player.safe && player.hasGun) player.water = Math.min(player.tank, player.water + 40 * dt); // the rain barrel
   if ((player.sinceHit > 2.5 && !carrying) || player.safe) player.wetness = Math.max(0, player.wetness - (player.safe ? 30 : 4) * dt);
 
   if (game.mode === 'intro' && game.stage === 2 && p.z < 181.6 && Math.abs(p.x - 64.5) < 0.8) { game.stage = 2.5; enterCity(false); }
   if (game.mode === 'city') {
-    if (game.stage < 3 && Math.hypot(p.x - milo.pos.x, p.z - milo.pos.z) < 3.4) meetMilo();
+    storyTick();
+    game.lock = player.hasGun ? findLock() : null;
+    if (TOUCH && !input.looking) { // one thumb is enough: the camera follows your stick and leans toward whoever you face
+      player.yaw -= input.mx * 1.7 * dt; player.pitch += (-0.12 - player.pitch) * Math.min(1, dt * 2);
+      if (game.lock) player.yaw += yawDiff(game.lock.pos.x - p.x, game.lock.pos.z - p.z) * Math.min(1, dt * 3.5);
+    }
     // pools
     for (const q of game.pools) if (p.y < 0.6 && Math.hypot(p.x - q.x, p.z - q.z) < 2.4 && player.hasGun) {
       if (q.owner !== 0) { if (player.water < player.tank * 0.5 && q.capT < 0.2) toast('Not your pool. Hold it alone for a few seconds to take it.'); continue; }
+      if (game.checkpoint !== q) { game.checkpoint = q; toast(`${q.name}. If you get soaked, this is where you wake up.`); }
       if (player.water >= player.tank) continue;
       player.water = Math.min(player.tank, player.water + 45 * dt);
       if (Math.random() < dt * 6) sfx('glug');
@@ -973,7 +1095,7 @@ function updatePlayer(dt) {
       const it = game.items[i], q = it.g.position;
       it.g.rotation.y += dt * 2; q.y = it.y + Math.sin(game.time * 3 + i) * 0.08;
       if (Math.hypot(q.x - p.x, q.z - p.z) < 1.1 && Math.abs(it.y - p.y - 0.6) < 1.4) {
-        if (it.kind === 'caps') { player.pocket += it.n; toast(`+${it.n} caps in your pocket. Bank them at the Treehouse.`); }
+        if (it.kind === 'caps') { player.caps += it.n; toast(`+${it.n} bottle caps`); }
         else if (it.kind === 'balloon') { player.balloons++; toast('+1 water balloon'); }
         else { player.water = Math.min(player.tank, player.water + 30); toast('A full water bottle. Glug.'); }
         scene.remove(it.g); game.items.splice(i, 1); sfx('pick');
@@ -1000,19 +1122,25 @@ function updateHud() {
   $('waterbar').firstChild.style.width = (player.hasGun ? player.water / player.tank * 100 : 0) + '%';
   $('wetbar').firstChild.style.width = Math.min(100, player.wetness) + '%';
   $('caps').textContent = player.caps + (player.pocket ? ` +${player.pocket}` : ''); $('decoys').textContent = player.decoys; $('boxes').textContent = player.card; $('balloons').textContent = player.balloons;
-  game.pools.forEach((q, i) => { $('pools').children[i].style.background = '#' + TEAM_COL[q.owner].toString(16).padStart(6, '0'); });
-  game.flags.forEach((f, i) => { $('flags').children[i].className = f.state === 'home' ? '' : f.state; });
+  $('notes').textContent = `${game.notesRead}/${LEVEL.notes.length}`;
   game.flash = Math.max(0, game.flash - 0.03);
   $('wetflash').style.opacity = Math.max(game.flash, player.wetness > 70 ? (player.wetness - 70) / 60 : 0);
-  // compass: next flag, or home if you're carrying one
-  let tx = PLACES.tree.x, tz = PLACES.tree.z, name = 'Treehouse';
-  if (game.stage < 3) { tx = milo.pos.x; tz = milo.pos.z; name = 'Milo'; }
-  else if (game.flags.some(f => f.state === 'carried')) { /* home */ }
-  else if (game.goalSel && game.goalSel.live()) { tx = game.goalSel.x; tz = game.goalSel.z; name = game.goalSel.name; }
-  else {
-    let bd = 1e9;
-    for (const f of game.flags) { const d = Math.hypot(f.home.x - player.pos.x, f.home.z - player.pos.z); if (f.state === 'home' && d < bd) { bd = d; tx = f.home.x; tz = f.home.z; name = f.name + ' flag'; } }
-  }
+  // the compass points at whatever stands between you and the next gate
+  let tx = PLACES.respawn.x, tz = PLACES.respawn.z, name = 'The Treehouse';
+  const dn = districtAt(player.pos.x, player.pos.z), gt = LEVEL.gates[dn];
+  if (game.stage < 3) { tx = PLACES.crate.x; tz = PLACES.crate.z; name = 'Something on a box'; }
+  else if (gt && !gt.open) {
+    let best = null, bd = 1e9;
+    for (const k of game.guards) if (k.district === dn && k.out <= 0) { const d = Math.hypot(k.pos.x - player.pos.x, k.pos.z - player.pos.z); if (d < bd) { bd = d; best = k; } }
+    const left = game.guards.filter(k => k.district === dn && k.out <= 0).length;
+    if (best) { tx = best.pos.x; tz = best.pos.z; name = `${LEVEL.districts[dn].who} hold the gate · ${left} left`; }
+  } else if (gt) { tx = gt.x; tz = gt.z; name = 'The gate is open'; }
+  // the ring on the kid you're locked on to
+  const lk = game.lock, ring = $('lock');
+  if (lk && playing()) {
+    tmp.set(lk.pos.x, lk.pos.y + lk.h * 0.6, lk.pos.z).project(camera);
+    ring.hidden = tmp.z > 1; ring.style.left = (tmp.x * 0.5 + 0.5) * canvas.clientWidth + 'px'; ring.style.top = (-tmp.y * 0.5 + 0.5) * canvas.clientHeight + 'px';
+  } else ring.hidden = true;
   const dx = tx - player.pos.x, dz = tz - player.pos.z;
   $('needle').style.transform = `rotate(${-(Math.atan2(-dx, -dz) - player.yaw)}rad)`;
   $('goal').textContent = `${name} · ${Math.round(Math.hypot(dx, dz))} boxes`;
@@ -1038,6 +1166,10 @@ function step(dt) {
   for (const a of game.actors) if (a !== player) { a.update(dt); gone ||= a.dead; }
   if (gone) game.actors = game.actors.filter(a => !a.dead);
   updatePools(dt); director(dt); rebuild(dt);
+  for (const l of game.lamps) { // lamps breathe; a few are on their way out
+    const f = l.flicker ? (Math.sin(game.time * 23 + l.seed) > 0.2 || Math.sin(game.time * 3.1 + l.seed) > 0.6 ? 1 : 0.15) : 0.9 + 0.1 * Math.sin(game.time * 2 + l.seed);
+    l.sm.opacity = f; l.pm.opacity = 0.55 * f;
+  }
   towerMesh.visible = skyline.visible = game.mode !== 'intro';
   if (game.mode === 'menu') avatar.visible = false; // the backyard is an ordinary backyard until you crawl in
   fx.update(dt);
@@ -1054,4 +1186,4 @@ function frame(now) {
 }
 setEnv('city'); showHud();
 requestAnimationFrame(frame);
-window.__cc = { game, player, world, step, input, PLACES, enterCity, startIntro };
+window.__cc = { game, player, world, step, input, PLACES, LEVEL, enterCity, startIntro };

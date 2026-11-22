@@ -1,52 +1,43 @@
 # Cardboard City
 
-A small 3D third-person game prototype. You go to your friend Milo's house after school. His big
-brother lets you in, you walk through the mess, open the back door, and the pile of boxes in the
-backyard turns out to be a whole city run by kids.
+A small 3D third-person adventure prototype. You go to your friend Milo's house after school. His
+big brother lets you in, you walk through the mess, open the back door, and crawl into the pile of
+boxes in the backyard. Inside it is nearly dark, much bigger than a backyard, and Milo is missing.
+He left notes.
 
 **The one rule of the world: water melts cardboard.** Squirt a wall and it goes soggy, then
-collapses. Any wall is a door. The other kids' water does the same thing, so the city wears down
-as fights move through it.
+collapses. Any wall is a door.
 
-## What's in the prototype
+The mood is a kids' spooky story rather than a scary game: a dusk that never ends, lit windows that
+a kid drew on with marker, a sun on a string, and cardboard cut-outs that are never facing the same
+way twice.
 
-- Intro: front door, big brother, wrecked house, backyard, the hole in the big box.
-- Third-person camera over your shoulder that tucks in behind you in narrow alleys.
-- Handmade city detail: marker-drawn windows on every tower, a painted road with parked cardboard
-  cars, tube streetlights, a traffic light, hydrants, a lemonade stand, planks and bunting strung
-  between towers, rooftop water tanks, and a cardboard sun and clouds hung on strings.
-- A dense city of cardboard: alleys one or two boxes wide, buildings with crooked towers stacked
-  far overhead, fake shopfronts with painted doors, hand-lettered signs, and cardboard cut-out
-  kids standing around to draw fire. The bottom floors are destructible; the towers are not.
-- Squirter with a water tank. Melted walls sometimes leave dry boxes you can pick up and place.
-  Water balloons open a whole wall. You can stand up a cut-out of yourself as a decoy.
-- Three tribes in costumes (Box Knights, Alley Pirates, Dino Scouts). They path through the alleys,
-  melt through walls when that is shorter, run out of water and have to go refill.
-- A dog that follows you, cats that don't, and geese that knock water out of your tank.
+## The level
 
-## The loop
+One linear route spirals through four gated districts to the Treehouse in the middle:
 
-1. **Prepare at the Treehouse.** It is your team's base: real wood, can't be melted, nobody fights
-   there. The rain barrel fills your tank, the market trades banked bottle caps for upgrades, and
-   the war map sets what your compass points at.
-2. **Push out.** Water is both your weapon and your key. Every wall you melt is water you won't
-   have in the fight.
-3. **Hit the objective.** Take a pool by standing in it alone for five seconds, or melt into a
-   fort's sealed keep and grab the flag.
-4. **Get home.** Caps you pick up sit in your pocket and are lost if you get soaked. A flag slows
-   you down, stops you drying off, and sends its whole tribe after you.
-5. **Bank and upgrade.** Reaching the Treehouse banks your caps. Flags are planted in the yard.
+1. **Checkpoint Street** — the Box Knights hold the first gate.
+2. **The Narrows** — alleys one box wide, held by the Alley Pirates.
+3. **The Dry District** — a long stretch with no pool until the end, held by the Dino Scouts.
+4. **Lights Out** — the streetlights are dead and some of the cut-outs follow you when you look away.
+5. **The Treehouse** — where Milo is.
 
-The city pushes back:
+Each gate opens when the kids guarding it are soaked. Inside a district you can go any way you
+like: follow the chalk arrows, or melt straight through buildings if you can spare the water.
+Barricades are taped across the route so you have to spend some. Pools refill your tank and are
+checkpoints. A vending box by each pool trades bottle caps for upgrades. Ten of Milo's notes are
+scattered along the way.
 
-- **Pools are territory.** You can only refill at pools your team holds, and so can the tribes.
-  A tribe with no pool nearby has to walk back to its fort for water. Each pool you hold gets one
-  of your friends posted to guard it.
-- **Raids.** Tribes send raiders to take pools they don't hold, including yours.
-- **Flags get stolen back.** A flag in your yard can be carried off by its tribe. You win by
-  holding all three at once.
-- **Walls get re-taped.** Holes you melt are rebuilt after a while, unless you are nearby or you
-  hold the pool in that district.
+## Controls on a phone
+
+The left thumb walks and the camera turns with you. The squirter locks on to any kid you are
+roughly facing and fires by itself. Hold the squirt button facing a wall and it opens a door at
+walking height. Dragging with the right thumb to look around is optional.
+
+## Still in the code, switched off
+
+The earlier open-world systems (tribe forts and flags, capturable pools, raids, wall rebuilding,
+allies) are still in `src/main.js` behind the `STORY` flag.
 
 ## Run it
 
