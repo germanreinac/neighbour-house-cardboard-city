@@ -45,7 +45,7 @@
   #targets { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
   #targets button { font: inherit; font-size: 16px; color: var(--ink); background: var(--paper); border: 2px solid var(--ink); padding: 3px 9px; border-radius: 3px; cursor: pointer; }
   #targets button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
-  #b-decoy { right: max(174px, env(safe-area-inset-right, 0px)); bottom: 204px; }
+  #b-decoy { right: max(208px, env(safe-area-inset-right, 0px)); bottom: 128px; width: 52px !important; height: 52px !important; font-size: 13px !important; }
   #compass { left: max(16px, env(safe-area-inset-left, 0px)); top: 12px; display: flex; gap: 8px; align-items: center; font-size: 16px; }
   #needle { width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 18px solid var(--alarm); }
   #prompt { left: 50%; top: 60%; transform: translateX(-50%); pointer-events: auto; cursor: pointer; font: inherit; font-size: 20px; color: var(--ink); background: var(--tape); white-space: nowrap; }
@@ -85,11 +85,26 @@
 
   #touch { inset: 0; }
   #touch button { position: absolute; pointer-events: auto; width: 60px; height: 60px; border-radius: 50%; border: 2px solid var(--ink); background: rgba(255, 246, 227, .6); font: 15px var(--body); color: var(--ink); touch-action: none; }
-  #b-fire { right: max(22px, env(safe-area-inset-right, 0px)); bottom: 84px; width: 104px !important; height: 104px !important; font-size: 19px !important; background: rgba(58, 160, 255, .65) !important; }
-  #b-jump { right: max(140px, env(safe-area-inset-right, 0px)); bottom: 62px; }
-  #b-block { right: max(26px, env(safe-area-inset-right, 0px)); bottom: 204px; }
-  #b-balloon { right: max(100px, env(safe-area-inset-right, 0px)); bottom: 204px; }
-  #stick { width: 96px; height: 96px; border-radius: 50%; border: 2px dashed rgba(42, 32, 24, .6); margin: -48px; }
+  #b-fire { right: max(22px, env(safe-area-inset-right, 0px)); bottom: 64px; width: 104px !important; height: 104px !important; font-size: 19px !important; background: rgba(58, 160, 255, .65) !important; }
+  #b-jump { right: max(142px, env(safe-area-inset-right, 0px)); bottom: 28px; }
+  #b-block { right: max(208px, env(safe-area-inset-right, 0px)); bottom: 66px; width: 52px !important; height: 52px !important; font-size: 13px !important; }
+  #b-balloon { right: max(142px, env(safe-area-inset-right, 0px)); bottom: 100px; width: 52px !important; height: 52px !important; font-size: 13px !important; }
+  #stick { position: absolute; width: 112px; height: 112px; border-radius: 50%; border: 2px solid rgba(255, 246, 227, .55); background: rgba(42, 32, 24, .25); margin: -56px; }
+  #knob { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px; border-radius: 50%; background: rgba(255, 246, 227, .8); border: 2px solid var(--ink); }
+  /* Phones: keep the middle and bottom of the screen clear for your character and your thumbs. */
+  @media (pointer: coarse) {
+    #stats { bottom: auto; top: 46px; width: 150px; gap: 3px; padding: 4px 8px; transform: none; }
+    #stats .row { font-size: 12px; } #stats .bar { height: 9px; }
+    #compass { font-size: 13px; padding: 3px 8px; max-width: 44%; }
+    #pack { font-size: 13px; gap: 2px 9px; padding: 3px 8px; max-width: 52%; transform: none; }
+    #pack b { font-size: 15px; }
+    #sub { bottom: auto; top: 44px; left: auto; right: max(16px, env(safe-area-inset-right, 0px)); transform: none; width: min(430px, calc(100% - 200px)); font-size: 15px; line-height: 1.2; padding: 4px 9px; }
+    #toasts { top: 112px; } .toast { font-size: 14px; }
+    #capbar { top: 30%; }
+    #card h2 { font-size: clamp(30px, 8vw, 60px); } #card p { font-size: 16px; }
+    #menu { padding-block: 8px; align-items: center; }
+    .panel { padding: 12px 14px; } .panel h1 { font-size: clamp(30px, 8vw, 44px); margin-bottom: 6px; } .panel p { margin-bottom: 8px; font-size: 16px; } .keys { font-size: 14px; }
+  }
   @media (prefers-reduced-motion: reduce) { .toast, #flags i.carried { animation-duration: 0.01s; } #fade, #card { transition: none; } }
 </style>
 
@@ -115,7 +130,7 @@
     <div id="sub" class="label" hidden></div>
     <button id="prompt" class="label" hidden></button>
     <div id="touch" hidden>
-      <div id="stick" hidden></div>
+      <div id="stick" hidden><div id="knob"></div></div>
       <button id="b-fire">squirt</button><button id="b-jump">jump</button><button id="b-block">box</button><button id="b-balloon">balloon</button><button id="b-decoy">cut-out</button>
     </div>
     <div id="card"><div><h2 id="card-h">Cardboard City</h2><p id="card-p"></p></div></div>
@@ -150,10 +165,9 @@
           <dt>E</dt><dd>talk, open, trade</dd>
         </dl>
         <dl class="keys" id="keys-touch" hidden>
-          <dt>Left thumb</dt><dd>walk. The camera turns with you.</dd>
-          <dt>Squirter</dt><dd>fires by itself at any kid you face</dd>
-          <dt>Squirt button</dt><dd>hold it facing a wall to melt a door</dd>
-          <dt>Right thumb</dt><dd>drag to look around, if you want to</dd>
+          <dt>Left thumb</dt><dd>push the way you want to run. The camera follows.</dd>
+          <dt>Squirt</dt><dd>hold it. It aims at the kid in the ring, or melts the wall you're facing.</dd>
+          <dt>Right thumb</dt><dd>drag to look around, only if you want to</dd>
         </dl>
       </div>
     </div>

@@ -30,9 +30,12 @@ scattered along the way.
 
 ## Controls on a phone
 
-The left thumb walks and the camera turns with you. The squirter locks on to any kid you are
-roughly facing and fires by itself. Hold the squirt button facing a wall and it opens a door at
-walking height. Dragging with the right thumb to look around is optional.
+Push the left stick the way you want to run. Your kid turns to face that way and the camera drifts
+in behind on its own. Hold the squirt button: if a kid is in the lock-on ring you turn and aim at
+them, otherwise you squirt straight ahead, and a wall in front of you is opened at walking height.
+Nothing fires by itself. Dragging with the right thumb to look around is optional.
+
+With a mouse the camera is yours: the crosshair aims, and your kid turns to face it while squirting.
 
 ## Still in the code, switched off
 

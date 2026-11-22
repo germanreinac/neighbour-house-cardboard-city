@@ -390,10 +390,10 @@ export function generate(world, seed = 7) {
   };
   reserve(63, 104, 66, 125);                                                                        // arrival street
   walk([[64.5, 106], [52, 109], [44, 116], [33, 111], [24, 116], [15, 111], [15.5, 101]], 3, { walls: [16, 44] });
-  walk([[15.5, 97], [10, 89], [17, 78], [11, 68], [21, 58], [10, 48], [18, 38], [15.5, 30]], 1.2, { walls: [20, 52, 70] });
+  walk([[15.5, 97], [10, 89], [17, 78], [11, 68], [21, 58], [10, 48], [18, 38], [15.5, 30]], 2, { walls: [20, 52, 70] });
   walk([[15.5, 26], [14, 15], [30, 12], [44, 20], [58, 10], [72, 18], [86, 10], [100, 17], [112, 13], [112.5, 26]], 3, { walls: [30, 62, 96] });
   walk([[112.5, 30], [118, 40], [106, 48], [112, 58], [104, 64.5], [100.5, 64.5]], 2, { dark: true, walls: [22] });
-  walk([[112, 58], [117, 72], [108, 84], [116, 93]], 1.2, { dark: true, walls: [26] });           // a dead end worth finding
+  walk([[112, 58], [117, 72], [108, 84], [116, 93]], 2, { dark: true, walls: [26] });           // a dead end worth finding
   walk([[94, 64.5], [79, 64.5]], 3);
   reserve(52, 53, 85, 76);                                                                          // treehouse clearing
   for (const p of PLACES.pools) { reserve(p.x - 4, p.z - 4, p.x + 4, p.z + 4); L.vendors.push({ x: p.x - 3.5, z: p.z - 3.5 }); }
@@ -483,7 +483,7 @@ export function generate(world, seed = 7) {
     const x = ri(3, CITY - 4), z = ri(3, CITY - 4);
     if (mask[x + CITY * z] !== 2 || world.get(x, 0, z) || districtAt(x, z) === 4) continue;
     if (L.guards.some(g => Math.hypot(g.x - x, g.z - z) < 1.6) || PLACES.pools.some(p => Math.hypot(p.x - x, p.z - z) < 4) || (Math.abs(x - 64) < 3 && z > 114)) continue;
-    if (R() < 0.3) fill(x, 0, z, x, R() < 0.7 ? 0 : 1, z, T.CARD);
+    if (R() < 0.1) fill(x, 0, z, x, 0, z, T.CARD);
   }
   // cardboard cut-out kids standing around the alleys
   for (let n = 0; n < 4000 && standees.length < 60; n++) {

@@ -168,7 +168,8 @@ const soggyBlue = new THREE.Color(0x27356b);
 
 const player = {
   pos: V3(PLACES.start.x, 0, PLACES.start.z), vel: V3(), r: 0.3, h: 1.4, onGround: false, blocked: false,
-  team: 0, yaw: 0, pitch: 0, water: 0, tank: 60, wetness: 0, sinceHit: 99, caps: 0, pocket: 0, card: 4, balloons: 2, decoys: 2,
+  team: 0, yaw: 0, pitch: 0, face: 0, // yaw is where the camera looks, face is where your kid is turned
+  water: 0, tank: 60, wetness: 0, sinceHit: 99, caps: 0, pocket: 0, card: 4, balloons: 2, decoys: 2,
   hasGun: false, pump: false, coat: false, tankLvl: 0, safe: false, out: 0,
   targetable() { return game.mode === 'city' && !this.safe && game.graceT <= 0; },
   hit(amount) {
@@ -722,27 +723,29 @@ const avatar = makeKid({ shirt: 0x2f6fd0, pants: 0x4a4038, costume: 'none' });
   avatar.traverse(o => { if (o.isMesh) o.castShadow = true; });
   avatar.visible = false; scene.add(avatar);
 }
-const CAM = { dist: 4, cur: 4, side: 0.5 }, pivot = V3(), back = V3();
+const CAM = { dist: TOUCH ? 4.8 : 4, cur: 4, side: 0, y: 0 }, pivot = V3(), back = V3();
 function updateCamera(dt) {
   const p = player.pos, cp = Math.cos(player.pitch), sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
   back.set(sy * cp, -Math.sin(player.pitch), cy * cp);
   // sit over the right shoulder when there's room, tuck in behind the head in a narrow alley
   const roomy = !world.solidAt(p.x + cy * 0.85, p.y + 1.4, p.z - sy * 0.85);
-  CAM.side += ((roomy ? 0.5 : 0) - CAM.side) * Math.min(1, dt * 8);
-  pivot.set(p.x + cy * CAM.side, p.y + 1.6, p.z - sy * CAM.side);
+  CAM.side += ((roomy && !TOUCH ? 0.5 : 0) - CAM.side) * Math.min(1, dt * 8);
+  CAM.y = Math.abs(p.y - CAM.y) > 3 ? p.y : CAM.y + (p.y - CAM.y) * Math.min(1, dt * 7); // don't bob with every hop
+  pivot.set(p.x + cy * CAM.side, CAM.y + (TOUCH ? 1.85 : 1.6), p.z - sy * CAM.side);
   const h = world.raycast(pivot, back, CAM.dist + 0.35, 0.05);
   const want = h ? Math.max(0.2, h.dist - 0.35) : CAM.dist;
   CAM.cur = want < CAM.cur ? want : Math.min(want, CAM.cur + dt * 5);
   camera.position.copy(pivot).addScaledVector(back, CAM.cur);
   camera.rotation.set(player.pitch, player.yaw, 0);
-  torch.position.set(p.x - sy * 0.3, p.y + 1.15, p.z - cy * 0.3);
-  torch.target.position.copy(torch.position).addScaledVector(back, -10);
+  const fs = Math.sin(player.face), fc = Math.cos(player.face);
+  torch.position.set(p.x - fs * 0.3, p.y + 1.15, p.z - fc * 0.3);
+  torch.target.position.set(p.x - fs * 10, p.y + 0.6, p.z - fc * 10);
 
   const u = avatar.userData, sp = Math.hypot(player.vel.x, player.vel.z);
-  avatar.visible = CAM.cur > 0.9; avatar.position.copy(p); avatar.rotation.y = player.yaw;
+  avatar.visible = CAM.cur > 0.9; avatar.position.copy(p); avatar.rotation.y = player.face;
   player.walk = (player.walk || 0) + sp * dt * 3.2;
   const sw = Math.sin(player.walk) * Math.min(1, sp / 2) * 0.7;
-  u.legL.rotation.x = sw; u.legR.rotation.x = -sw; u.armL.rotation.x = -sw; u.armR.rotation.x = 1.45 + player.pitch;
+  u.legL.rotation.x = sw; u.legR.rotation.x = -sw; u.armL.rotation.x = -sw; u.armR.rotation.x = 1.45 + (TOUCH ? 0 : player.pitch);
   u.bodyMat.color.copy(u.shirt).lerp(soggyBlue, Math.min(0.75, player.wetness / 110));
   for (const m of u.gunParts) m.visible = player.hasGun;
   const carried = game.flags.find(f => f.state === 'carried');
@@ -777,6 +780,7 @@ function titleCard(h, p, secs = 3.5) {
 }
 function showHud() {
   for (const id of ['cross', 'compass', 'pack', 'stats']) $(id).hidden = !(game.mode === 'city');
+  if (TOUCH) $('cross').hidden = true;
   $('touch').hidden = !(TOUCH && game.mode !== 'menu');
 }
 
@@ -790,7 +794,7 @@ function startIntro() {
 function enterCity(instant) {
   const go = () => {
     game.mode = 'city'; setEnv('city'); $('menu').hidden = true;
-    player.pos.set(PLACES.citySpawn.x, 0, PLACES.citySpawn.z); player.vel.set(0, 0, 0); player.yaw = 0; player.pitch = 0;
+    player.pos.set(PLACES.citySpawn.x, 0, PLACES.citySpawn.z); player.vel.set(0, 0, 0); player.yaw = player.face = 0; player.pitch = 0;
     subs.length = 0; subT = 0;
     showHud(); titleCard('Cardboard City', 'It was a pile of boxes a second ago.');
     say('', 'It is bigger in here than the whole backyard. And later. The sky is the colour of almost dinner time.', 5);
@@ -803,7 +807,7 @@ function readNote(n) {
   say('Milo\'s note', n.text, 3.5 + n.text.length * 0.045);
   if (n.i === 0) {
     game.stage = 3; player.hasGun = true; player.water = player.tank; for (const m of game.spare) m.visible = false;
-    toast(TOUCH ? 'Got a squirter. It fires by itself at kids you face. Hold squirt for walls.' : 'Got a squirter. Hold click to spray. Walls melt.');
+    toast(TOUCH ? 'Got a squirter. Hold squirt: it aims at the kid in the ring, or melts the wall in front of you.' : 'Got a squirter. Hold click to spray. Walls melt.');
   }
 }
 // What each district says to you as you walk in, and as its gate gives way.
@@ -905,7 +909,7 @@ function closeMarket() { game.marketOpen = false; $('market').hidden = true; can
 $('market-close').onclick = closeMarket;
 
 // ------------------------------------------------------------------ input
-const input = { keys: new Set(), fire: false, mx: 0, mz: 0 };
+const input = { keys: new Set(), fire: false, mx: 0, mz: 0, lookAt: -9 };
 const playing = () => game.mode !== 'menu' && !game.marketOpen;
 addEventListener('keydown', e => {
   if (e.code === 'Escape' && game.marketOpen) return closeMarket();
@@ -920,7 +924,7 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => input.keys.delete(e.code));
 addEventListener('blur', () => { input.keys.clear(); input.fire = false; });
-const look = (dx, dy, k) => { player.yaw -= dx * k; player.pitch = clamp(player.pitch - dy * k, -1.45, 1.45); };
+const look = (dx, dy, k) => { input.lookAt = game.time; player.yaw -= dx * k; player.pitch = clamp(player.pitch - dy * k, -1.45, 1.45); };
 canvas.addEventListener('mousedown', e => {
   if (!playing() || TOUCH) return;
   canvas.focus();
@@ -943,7 +947,7 @@ if (TOUCH) {
   const down = (e, firing) => {
     if (!playing()) return;
     e.preventDefault();
-    if (!firing && stickId === null && e.clientX < innerWidth * 0.42) {
+    if (!firing && stickId === null && e.clientX < innerWidth * 0.5) {
       stickId = e.pointerId; sx = e.clientX; sy = e.clientY;
       const r = $('ui').getBoundingClientRect(); stick.style.left = sx - r.left + 'px'; stick.style.top = sy - r.top + 'px'; stick.hidden = false;
     } else { looks.set(e.pointerId, { x: e.clientX, y: e.clientY, firing }); input.looking = true; }
@@ -952,12 +956,17 @@ if (TOUCH) {
   canvas.addEventListener('pointerdown', e => down(e, false));
   $('b-fire').addEventListener('pointerdown', e => { $('b-fire').setPointerCapture(e.pointerId); down(e, true); });
   addEventListener('pointermove', e => {
-    if (e.pointerId === stickId) { input.mx = clamp((e.clientX - sx) / 48, -1, 1); input.mz = clamp((e.clientY - sy) / 48, -1, 1); }
+    if (e.pointerId === stickId) {
+      let dx = (e.clientX - sx) / 56, dy = (e.clientY - sy) / 56; const m = Math.hypot(dx, dy);
+      if (m > 1) { dx /= m; dy /= m; }
+      $('knob').style.transform = `translate(${dx * 40}px, ${dy * 40}px)`;
+      const live = m > 0.18; input.mx = live ? dx : 0; input.mz = live ? dy : 0; // small dead zone so a resting thumb stands still
+    }
     const l = looks.get(e.pointerId);
     if (l) { look(e.clientX - l.x, e.clientY - l.y, 0.006); l.x = e.clientX; l.y = e.clientY; }
   });
   const up = e => {
-    if (e.pointerId === stickId) { stickId = null; input.mx = input.mz = 0; stick.hidden = true; }
+    if (e.pointerId === stickId) { stickId = null; input.mx = input.mz = 0; stick.hidden = true; $('knob').style.transform = ''; }
     const l = looks.get(e.pointerId); if (l) { if (l.firing) input.fire = false; looks.delete(e.pointerId); input.looking = looks.size > 0; }
   };
   addEventListener('pointerup', up); addEventListener('pointercancel', up);
@@ -976,41 +985,38 @@ let aimDist = 20, flip = false;
 const yawDiff = (dx, dz) => { const d = Math.atan2(-dx, -dz) - player.yaw; return Math.atan2(Math.sin(d), Math.cos(d)); };
 // The kid you are roughly facing. On a phone this cone is wide and the squirter fires at them by itself.
 function findLock() {
-  const p = player.pos, cone = TOUCH ? 0.7 : 0.14; let best = null, ba = cone;
+  const p = player.pos, cone = TOUCH ? 1.0 : 0.14; let best = null, ba = cone;
   for (const a of game.actors) {
     if (a.team <= 0 || a.isDecoy || !a.targetable()) continue;
     const dx = a.pos.x - p.x, dz = a.pos.z - p.z, d = Math.hypot(dx, dz);
     if (d > 15 || d < 0.3) continue;
-    const ang = Math.abs(yawDiff(dx, dz)) + d * 0.004;
+    const ang = Math.abs(yawDiff(dx, dz)) + d * 0.01;
     if (ang < ba && world.los(p.x, p.y + 1.2, p.z, a.pos.x, a.pos.y + 0.8, a.pos.z)) { ba = ang; best = a; }
   }
   return best;
 }
 function aim() {
   camera.getWorldDirection(fwd);
-  const p = player.pos, sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
+  const p = player.pos, sy = Math.sin(player.face), cy = Math.cos(player.face);
   let tx, ty, tz; const lk = game.lock;
   if (lk) { tx = lk.pos.x; ty = lk.pos.y + lk.h * 0.6; tz = lk.pos.z; }
-  else {
-    // On a phone, a wall straight ahead gets opened at walking height: one cell at your feet, one above.
-    let door = null;
-    if (TOUCH) {
-      flip = !flip; tmp.set(p.x, p.y + (flip ? 0.5 : 1.5), p.z); back.set(-sy, 0, -cy);
-      const h = world.raycast(tmp, back, 7, 0.1); if (h && world.get(h.x, h.y, h.z) === T.CARD) door = h;
-    }
-    if (door) { tx = door.x + 0.5; ty = door.y + 0.5; tz = door.z + 0.5; }
-    else {
-      const h = world.raycast(camera.position, fwd, 45, 0.12), d = h ? Math.max(h.dist, CAM.cur + 1.5) : 45;
-      tx = camera.position.x + fwd.x * d; ty = camera.position.y + fwd.y * d; tz = camera.position.z + fwd.z * d;
-    }
+  else if (TOUCH) {
+    // No crosshair on a phone: you squirt the way your kid is facing. A wall straight ahead gets opened
+    // at walking height, one cell at your feet and one above.
+    flip = !flip; tmp.set(p.x, p.y + (flip ? 0.5 : 1.5), p.z); back.set(-sy, 0, -cy);
+    const h = world.raycast(tmp, back, 7, 0.1);
+    if (h && world.get(h.x, h.y, h.z) === T.CARD) { tx = h.x + 0.5; ty = h.y + 0.5; tz = h.z + 0.5; }
+    else { tx = p.x - sy * 9; ty = p.y + 0.9; tz = p.z - cy * 9; }
+  } else {
+    const h = world.raycast(camera.position, fwd, 45, 0.12), d = h ? Math.max(h.dist, CAM.cur + 1.5) : 45;
+    tx = camera.position.x + fwd.x * d; ty = camera.position.y + fwd.y * d; tz = camera.position.z + fwd.z * d;
   }
   eye.set(p.x - sy * 0.4 + cy * 0.28, p.y + 0.95, p.z - cy * 0.4 - sy * 0.28);
   fwd.set(tx - eye.x, ty - eye.y, tz - eye.z); aimDist = fwd.length(); fwd.normalize();
 }
 let fireAcc = 0, emptyT = 0;
 function squirt(dt) {
-  const auto = TOUCH && game.lock && player.water > 0 && !player.safe;
-  if (!input.fire && !input.keys.has('KeyF') && !auto) { fireAcc = 0; return; }
+  if (!input.fire && !input.keys.has('KeyF')) { fireAcc = 0; return; }
   if (!player.hasGun || game.mode !== 'city') return;
   if (player.safe) { toast('No squirting in the Treehouse. That\'s the rule.'); return; }
   if (player.water <= 0) { if ((emptyT -= dt) <= 0) { emptyT = 0.4; sfx('empty'); toast('Tank\'s empty. Find a kiddie pool.'); } return; }
@@ -1041,9 +1047,9 @@ function placeBox() {
 function placeDecoy() {
   if (game.mode !== 'city' || player.safe) return;
   if (player.decoys <= 0) { toast('No cut-outs left. The Treehouse sells them.'); return; }
-  const p = player.pos, x = p.x - Math.sin(player.yaw) * 1.5, z = p.z - Math.cos(player.yaw) * 1.5;
+  const p = player.pos, x = p.x - Math.sin(player.face) * 1.5, z = p.z - Math.cos(player.face) * 1.5;
   if (world.solidAt(x, p.y + 0.4, z) || world.solidAt(x, p.y + 1.1, z)) { toast('No room to stand it up there.'); return; }
-  player.decoys--; game.actors.push(new Decoy(x, p.y, z, player.yaw, 0)); sfx('thunk');
+  player.decoys--; game.actors.push(new Decoy(x, p.y, z, player.face, 0)); sfx('thunk');
 }
 function throwBalloon() {
   if (game.mode !== 'city' || player.safe) return;
@@ -1064,6 +1070,20 @@ function updatePlayer(dt) {
   const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw), carrying = game.flags.some(fl => fl.state === 'carried'), speed = carrying ? 4.3 : 5.3; // a flag is heavy
   const wx = (-sin * f + cos * s) * speed, wz = (-cos * f - sin * s) * speed, a = Math.min(1, dt * 14);
   player.vel.x += (wx - player.vel.x) * a; player.vel.z += (wz - player.vel.z) * a;
+  const turn = (to, rate) => { const d = Math.atan2(Math.sin(to - player.face), Math.cos(to - player.face)); player.face += d * Math.min(1, dt * rate); };
+  const moving = Math.hypot(f, s) > 0.1, firing = player.hasGun && (input.fire || k.has('KeyF'));
+  const lk = game.lock;
+  if (firing && lk) turn(Math.atan2(-(lk.pos.x - p.x), -(lk.pos.z - p.z)), 18);      // squirting: face whoever you're aimed at
+  else if (firing && !TOUCH) turn(player.yaw, 18);                                    // or, with a mouse, wherever the crosshair is
+  else if (moving) turn(Math.atan2(-wx, -wz), 12);                                    // otherwise face the way you're running
+  // Nobody steering the camera? Let it swing round behind you. Running straight at it leaves it alone.
+  const handsOff = TOUCH ? !input.looking && game.time - input.lookAt > 0.6 : document.pointerLockElement !== canvas && game.time - input.lookAt > 1.2;
+  if (handsOff && game.mode !== 'menu') {
+    const d = Math.atan2(Math.sin(player.face - player.yaw), Math.cos(player.face - player.yaw));
+    if (moving) player.yaw += Math.sin(d) * Math.min(1, Math.hypot(f, s)) * 1.05 * dt; // gentle: holding sideways is a wide arc, not a spin
+    if (firing && lk) player.yaw += d * Math.min(1, dt * 2.5);
+    player.pitch += ((TOUCH ? -0.2 : -0.1) - player.pitch) * Math.min(1, dt * 1.5);
+  }
   if (k.has('Space') && player.onGround) { player.vel.y = JUMP; player.onGround = false; }
   moveActor(world, player, dt);
   if (game.mode === 'intro') { p.x = clamp(p.x, 50, 79); p.z = clamp(p.z, 175.5, 222.5); }
@@ -1078,10 +1098,6 @@ function updatePlayer(dt) {
   if (game.mode === 'city') {
     storyTick();
     game.lock = player.hasGun ? findLock() : null;
-    if (TOUCH && !input.looking) { // one thumb is enough: the camera follows your stick and leans toward whoever you face
-      player.yaw -= input.mx * 1.7 * dt; player.pitch += (-0.12 - player.pitch) * Math.min(1, dt * 2);
-      if (game.lock) player.yaw += yawDiff(game.lock.pos.x - p.x, game.lock.pos.z - p.z) * Math.min(1, dt * 3.5);
-    }
     // pools
     for (const q of game.pools) if (p.y < 0.6 && Math.hypot(p.x - q.x, p.z - q.z) < 2.4 && player.hasGun) {
       if (q.owner !== 0) { if (player.water < player.tank * 0.5 && q.capT < 0.2) toast('Not your pool. Hold it alone for a few seconds to take it.'); continue; }
