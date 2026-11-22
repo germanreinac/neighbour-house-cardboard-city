@@ -93,9 +93,22 @@ vec3 cardSkin(vec3 wp, vec3 n){
   }
   return col;
 }`;
-function cardboardMaterial() {
+// The diorama camera looks down into the city, so anything between it and your kid has to get out
+// of the way. Fragments inside a cone from the camera (a) to the kid (b) are thrown away.
+export const CUT = { a: { value: new THREE.Vector3() }, b: { value: new THREE.Vector3() }, r: { value: 0 }, y: { value: 99 } };
+const CUT_GLSL = /* glsl */`
+uniform vec3 uCutA; uniform vec3 uCutB; uniform float uCutR; uniform float uCutY;
+void cutAway(vec3 wp){
+  if (uCutR <= 0.0) return;
+  if (wp.y > uCutY) discard; // the dollhouse slice: nothing far above your head
+  vec3 ab = uCutB - uCutA; float t = dot(wp - uCutA, ab) / dot(ab, ab);
+  if (t > 0.0 && t < 0.965 && length(wp - (uCutA + ab * t)) < uCutR * (0.3 + 0.7 * t)) discard;
+}`;
+function worldMaterial(skin) {
   const mat = new THREE.MeshLambertMaterial();
+  mat.customProgramCacheKey = () => (skin ? 'card' : 'plain'); // same hook function, two different shaders
   mat.onBeforeCompile = sh => {
+    sh.uniforms.uCutA = CUT.a; sh.uniforms.uCutB = CUT.b; sh.uniforms.uCutR = CUT.r; sh.uniforms.uCutY = CUT.y;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vONrm;')
       .replace('#include <fog_vertex>', `#include <fog_vertex>
@@ -105,9 +118,9 @@ function cardboardMaterial() {
         #endif
         vWPos = (modelMatrix * wpC).xyz;`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vONrm;\n' + SKIN)
-      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= cardSkin(vWPos, vONrm);')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += skinGlow;');
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vONrm;\n' + CUT_GLSL + (skin ? SKIN : ''))
+      .replace('#include <color_fragment>', '#include <color_fragment>\ncutAway(vWPos);' + (skin ? '\ndiffuseColor.rgb *= cardSkin(vWPos, vONrm);' : ''));
+    if (skin) sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += skinGlow;');
   };
   return mat;
 }
@@ -119,8 +132,8 @@ export class World {
     this.wet = new Float32Array(SX * SY * SZ);
     this.wetSet = new Set();
     this.geo = new THREE.BoxGeometry(1, 1, 1);
-    this.cardMat = cardboardMaterial();
-    this.solidMat = new THREE.MeshLambertMaterial();
+    this.cardMat = worldMaterial(true);
+    this.solidMat = worldMaterial(false);
     this.chunks = [];
     for (let i = 0; i < CX * CZ; i++) this.chunks.push({ dirty: true, card: null, solid: null });
     this.onBreak = null; // (x,y,z,byPlayer)

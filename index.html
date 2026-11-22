@@ -25,6 +25,7 @@
 
   #lock { width: 46px; height: 46px; margin: -23px; border: 3px dashed var(--paper); border-radius: 50%; box-shadow: 0 0 0 2px var(--ink); animation: spin 4s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  #b-view { left: 50%; top: 12px; transform: translateX(-50%); pointer-events: auto; cursor: pointer; font: inherit; font-size: 14px; color: var(--ink); background: var(--tape); padding: 3px 9px; white-space: nowrap; }
   #cross { left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: var(--paper); border: 1.5px solid var(--ink); }
   #stats { left: max(16px, env(safe-area-inset-left, 0px)); bottom: 14px; width: min(230px, 46vw); display: grid; gap: 6px; transform: rotate(-1.2deg); }
   .bar { height: 14px; border: 2px solid var(--ink); background: var(--paper); border-radius: 2px; overflow: hidden; }
@@ -100,6 +101,7 @@
     #pack b { font-size: 15px; }
     #sub { bottom: auto; top: 44px; left: auto; right: max(16px, env(safe-area-inset-right, 0px)); transform: none; width: min(430px, calc(100% - 200px)); font-size: 15px; line-height: 1.2; padding: 4px 9px; }
     #toasts { top: 112px; } .toast { font-size: 14px; }
+    #b-view { top: auto; bottom: 8px; font-size: 12px; }
     #capbar { top: 30%; }
     #card h2 { font-size: clamp(30px, 8vw, 60px); } #card p { font-size: 16px; }
     #menu { padding-block: 8px; align-items: center; }
@@ -114,6 +116,7 @@
     <div id="wetflash"></div>
     <div id="cross" hidden></div>
     <div id="lock" hidden></div>
+    <button id="b-view" class="label" hidden>view: diorama</button>
     <div id="compass" class="label" hidden><div id="needle"></div><span id="goal">Treehouse</span></div>
     <div id="pack" class="label" hidden>
       <span>notes <b id="notes">0/10</b></span>
@@ -163,6 +166,7 @@
           <dt>G</dt><dd>throw a water balloon</dd>
           <dt>X</dt><dd>stand up a cardboard cut-out of yourself</dd>
           <dt>E</dt><dd>talk, open, trade</dd>
+          <dt>C</dt><dd>switch between the diorama view and over the shoulder</dd>
         </dl>
         <dl class="keys" id="keys-touch" hidden>
           <dt>Left thumb</dt><dd>push the way you want to run. The camera follows.</dd>

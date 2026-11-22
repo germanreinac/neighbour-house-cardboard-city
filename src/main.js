@@ -1,6 +1,6 @@
 // Cardboard City: you visit a friend, walk through his wrecked house, and find a city in the backyard.
 import * as THREE from '../vendor/three.module.min.js';
-import { World, generate, PLACES, LEVEL, districtAt, T, CITY, SY } from './world.js';
+import { World, generate, PLACES, LEVEL, CUT, districtAt, T, CITY, SY } from './world.js';
 import { Kid, Animal, makeKid, moveActor, JUMP, WATER_GRAV } from './actors.js';
 
 const $ = id => document.getElementById(id);
@@ -58,11 +58,24 @@ const ENV = {
   yard: { color: 0xa9d6ee, near: 25, far: 62, sky: 0xfff1d6, ground: 0x9a8468, hemi: 1.2, sun: 0xfff0d8, sunI: 2.3, torch: 0 },
   city: { color: 0x2b2749, near: 4, far: 46, sky: 0x9296dc, ground: 0x4d4258, hemi: 1.0, sun: 0xb4bcff, sunI: 0.8, torch: 3.2 },
 };
-let viewDist = 50;
+let viewDist = 50, env = null;
+// The diorama camera stands well back, so the fog has to start further out or your kid is in it.
+function applyView() {
+  const dio = game.cam === 'diorama' && game.mode !== 'menu', back = dio ? 14 : 0;
+  scene.fog.near = env.near + back; scene.fog.far = env.far + back; viewDist = env.far + back;
+  const fov = dio ? 40 : 66; if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
+  if (dio && document.pointerLockElement) document.exitPointerLock();
+  $('cross').hidden = dio || TOUCH || game.mode !== 'city';
+  $('b-view').textContent = dio ? 'view: diorama' : 'view: shoulder';
+}
+function setCam(mode) {
+  game.cam = mode; try { localStorage.setItem('cc-cam', mode); } catch { /* fine without it */ }
+  CAM.cur = CAM.dist; applyView();
+}
 function setEnv(name) {
   const e = ENV[name];
   scene.fog.color.setHex(e.color); scene.background.setHex(e.color);
-  scene.fog.near = e.near; scene.fog.far = e.far; viewDist = e.far;
+  env = e; applyView();
   hemi.color.setHex(e.sky); hemi.groundColor.setHex(e.ground); hemi.intensity = e.hemi;
   sun.color.setHex(e.sun); sun.intensity = e.sunI; torch.intensity = e.torch;
 }
@@ -181,7 +194,7 @@ const player = {
 
 const game = {
   scene, world, fx, player, soggyBlue, sfx,
-  mode: 'menu', time: 0, guards: [], notes: [], lamps: [], doors: [], notesRead: 0, district: -1, checkpoint: null, lock: null, ended: false, actors: [player], items: [], flags: [], pools: [], allies: [], broken: [], goalSel: null, stage: 0, graceT: 0, flash: 0, won: false, marketOpen: false,
+  mode: 'menu', time: 0, cam: 'diorama', cursor: null, guards: [], notes: [], lamps: [], doors: [], notesRead: 0, district: -1, checkpoint: null, lock: null, ended: false, actors: [player], items: [], flags: [], pools: [], allies: [], broken: [], goalSel: null, stage: 0, graceT: 0, flash: 0, won: false, marketOpen: false,
   nearPlayer(p, d) { const dx = p.x - player.pos.x, dz = p.z - player.pos.z; return dx * dx + dz * dz < d * d; },
   freeSpot(x, z, range, avoid = 0) {
     for (let n = 0; n < 80; n++) {
@@ -248,6 +261,7 @@ world.onBreak = (x, y, z, byPlayer) => {
 };
 
 // ------------------------------------------------------------------ decoration that breaks up the grid
+const skyline = new THREE.Group(); scene.add(skyline); // everything overhead: hidden in the backyard and in the diorama view
 const props = new Map(); // support cell -> things to remove when that cell melts
 const hang = (sup, fn) => { const i = world.idx(...sup); if (!props.has(i)) props.set(i, []); props.get(i).push(fn); };
 const kraft = new THREE.MeshLambertMaterial({ color: 0xffffff });
@@ -279,7 +293,7 @@ scene.add(towerMesh);
     mesh.setMatrixAt(i, dummy.matrix); mesh.setColorAt(i, tone.setHex([0xc9a26b, 0xb98f58, 0xd3ae76][i % 3]));
     if (f.sup) hang(f.sup, () => { mesh.setMatrixAt(i, ZERO); mesh.instanceMatrix.needsUpdate = true; });
   });
-  scene.add(mesh);
+  skyline.add(mesh);
 }
 { // flattened boxes trampled into the lawn, at every angle
   const N = 420, mesh = new THREE.InstancedMesh(unitBox, kraft, N);
@@ -295,7 +309,7 @@ scene.add(towerMesh);
 { // the tree's canopy: soft blobs, the one thing here that isn't a box
   const leaf = new THREE.MeshLambertMaterial({ color: 0x4f8f4a, flatShading: true }), geo = new THREE.IcosahedronGeometry(1, 1);
   for (const [x, y, z, r] of [[64.5, 12.5, 64.5, 8], [58, 11.5, 61, 5.5], [71, 11.8, 62, 5.5], [62, 11.5, 71, 5.5], [69, 12, 70, 5], [64.5, 15, 64.5, 5.5]]) {
-    const m = new THREE.Mesh(geo, leaf); m.position.set(x, y, z); m.scale.set(r, r * 0.55, r); m.rotation.y = x; m.castShadow = true; scene.add(m);
+    const m = new THREE.Mesh(geo, leaf); m.position.set(x, y, z); m.scale.set(r, r * 0.55, r); m.rotation.y = x; m.castShadow = true; skyline.add(m);
   }
 }
 // hand-lettered signs
@@ -359,7 +373,6 @@ function stick(geo, mat, w, h, d, x, y, z, dx, dz, sups, tiltX = 0, roll = 0) {
 }
 
 // ------------------------------------------------------------------ street life: a kid's idea of a city
-const skyline = new THREE.Group(); scene.add(skyline); // hidden until you crawl into the pile
 const lam = c => new THREE.MeshLambertMaterial({ color: c }), glow = c => new THREE.MeshBasicMaterial({ color: c });
 const tubeGeo = new THREE.CylinderGeometry(0.5, 0.5, 1, 10);
 function prop(parent, geo, mat, w, h, d, x, y, z, rx = 0, ry = 0, rz = 0) {
@@ -776,26 +789,46 @@ const avatar = makeKid({ shirt: 0x2f6fd0, pants: 0x4a4038, costume: 'none' });
   avatar.traverse(o => { if (o.isMesh) o.castShadow = true; });
   avatar.visible = false; scene.add(avatar);
 }
-const CAM = { dist: TOUCH ? 4.8 : 4, cur: 4, side: 0, y: 0 }, pivot = V3(), back = V3();
+const CAM = { dist: TOUCH ? 4.8 : 4, cur: 4, side: 0, y: 0, lx: 0, lz: 0 }, pivot = V3(), back = V3();
+// Which way the diorama looks in each district, so the road ahead runs up the screen.
+function dioYaw() {
+  if (game.mode !== 'city') return 0;
+  const p = player.pos, d = districtAt(p.x, p.z);
+  return d === 0 ? (p.x > 58 ? 0 : Math.PI / 2) : d === 1 ? 0 : d === 2 ? -Math.PI / 2 : d === 3 ? (p.z > 60 && p.x > 108 ? Math.PI : Math.PI) : Math.PI / 2;
+}
 function updateCamera(dt) {
-  const p = player.pos, cp = Math.cos(player.pitch), sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
-  back.set(sy * cp, -Math.sin(player.pitch), cy * cp);
-  // sit over the right shoulder when there's room, tuck in behind the head in a narrow alley
-  const roomy = !world.solidAt(p.x + cy * 0.85, p.y + 1.4, p.z - sy * 0.85);
-  CAM.side += ((roomy && !TOUCH ? 0.5 : 0) - CAM.side) * Math.min(1, dt * 8);
+  const p = player.pos;
   CAM.y = Math.abs(p.y - CAM.y) > 3 ? p.y : CAM.y + (p.y - CAM.y) * Math.min(1, dt * 7); // don't bob with every hop
-  pivot.set(p.x + cy * CAM.side, CAM.y + (TOUCH ? 1.85 : 1.6), p.z - sy * CAM.side);
-  const h = world.raycast(pivot, back, CAM.dist + 0.35, 0.05);
-  const want = h ? Math.max(0.2, h.dist - 0.35) : CAM.dist;
-  CAM.cur = want < CAM.cur ? want : Math.min(want, CAM.cur + dt * 5);
-  camera.position.copy(pivot).addScaledVector(back, CAM.cur);
+  if (game.cam === 'diorama') {
+    // Fixed angle, looking down into the model. Nothing to steer.
+    const dy = dioYaw() - player.yaw; player.yaw += Math.atan2(Math.sin(dy), Math.cos(dy)) * Math.min(1, dt * 1.5);
+    player.pitch = -1.08;
+    const cp = Math.cos(player.pitch), sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
+    back.set(sy * cp, -Math.sin(player.pitch), cy * cp);
+    CAM.lx += (player.vel.x * 0.4 - CAM.lx) * Math.min(1, dt * 2); CAM.lz += (player.vel.z * 0.4 - CAM.lz) * Math.min(1, dt * 2); // look a little ahead
+    pivot.set(p.x + CAM.lx, CAM.y + 0.9, p.z + CAM.lz);
+    camera.position.copy(pivot).addScaledVector(back, 17);
+    CUT.y.value = Math.round(p.y) + 4.02; CUT.r.value = 2.7; CUT.a.value.copy(camera.position); CUT.b.value.set(p.x, p.y + 0.9, p.z);
+  } else {
+    const cp = Math.cos(player.pitch), sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
+    back.set(sy * cp, -Math.sin(player.pitch), cy * cp);
+    // sit over the right shoulder when there's room, tuck in behind the head in a narrow alley
+    const roomy = !world.solidAt(p.x + cy * 0.85, p.y + 1.4, p.z - sy * 0.85);
+    CAM.side += ((roomy && !TOUCH ? 0.5 : 0) - CAM.side) * Math.min(1, dt * 8);
+    pivot.set(p.x + cy * CAM.side, CAM.y + (TOUCH ? 1.85 : 1.6), p.z - sy * CAM.side);
+    const h = world.raycast(pivot, back, CAM.dist + 0.35, 0.05);
+    const want = h ? Math.max(0.2, h.dist - 0.35) : CAM.dist;
+    CAM.cur = want < CAM.cur ? want : Math.min(want, CAM.cur + dt * 5);
+    camera.position.copy(pivot).addScaledVector(back, CAM.cur);
+    CUT.r.value = 0;
+  }
   camera.rotation.set(player.pitch, player.yaw, 0);
   const fs = Math.sin(player.face), fc = Math.cos(player.face);
   torch.position.set(p.x - fs * 0.3, p.y + 1.15, p.z - fc * 0.3);
   torch.target.position.set(p.x - fs * 10, p.y + 0.6, p.z - fc * 10);
 
   const u = avatar.userData, sp = Math.hypot(player.vel.x, player.vel.z);
-  avatar.visible = CAM.cur > 0.9; avatar.position.copy(p); avatar.rotation.y = player.face;
+  avatar.visible = CAM.cur > 0.9 || game.cam === 'diorama'; avatar.position.copy(p); avatar.rotation.y = player.face;
   player.walk = (player.walk || 0) + sp * dt * 3.2;
   const sw = Math.sin(player.walk) * Math.min(1, sp / 2) * 0.7;
   u.legL.rotation.x = sw; u.legR.rotation.x = -sw; u.armL.rotation.x = -sw; u.armR.rotation.x = 1.45 + (TOUCH ? 0 : player.pitch);
@@ -833,7 +866,7 @@ function titleCard(h, p, secs = 3.5) {
 }
 function showHud() {
   for (const id of ['cross', 'compass', 'pack', 'stats']) $(id).hidden = !(game.mode === 'city');
-  if (TOUCH) $('cross').hidden = true;
+  $('b-view').hidden = game.mode === 'menu'; applyView();
   $('touch').hidden = !(TOUCH && game.mode !== 'menu');
 }
 
@@ -974,14 +1007,15 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyQ') placeBox();
   if (e.code === 'KeyG') throwBalloon();
   if (e.code === 'KeyX') placeDecoy();
+  if (e.code === 'KeyC') setCam(game.cam === 'diorama' ? 'shoulder' : 'diorama');
 });
 addEventListener('keyup', e => input.keys.delete(e.code));
 addEventListener('blur', () => { input.keys.clear(); input.fire = false; });
-const look = (dx, dy, k) => { input.lookAt = game.time; player.yaw -= dx * k; player.pitch = clamp(player.pitch - dy * k, -1.45, 1.45); };
+const look = (dx, dy, k) => { if (game.cam === 'diorama') return; input.lookAt = game.time; player.yaw -= dx * k; player.pitch = clamp(player.pitch - dy * k, -1.45, 1.45); };
 canvas.addEventListener('mousedown', e => {
   if (!playing() || TOUCH) return;
   canvas.focus();
-  if (!document.pointerLockElement) { try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch { /* drag-to-look still works */ } }
+  if (!document.pointerLockElement && game.cam !== 'diorama') { try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch { /* drag-to-look still works */ } }
   if (e.button === 0) input.fire = true;
   if (e.button === 2) placeBox();
 });
@@ -991,6 +1025,16 @@ addEventListener('mousemove', e => {
   if (document.pointerLockElement === canvas || e.buttons) look(e.movementX, e.movementY, 0.0024);
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('mousemove', e => { const r = canvas.getBoundingClientRect(); input.nx = (e.clientX - r.left) / r.width * 2 - 1; input.ny = -((e.clientY - r.top) / r.height * 2 - 1); });
+$('b-view').onclick = () => { setCam(game.cam === 'diorama' ? 'shoulder' : 'diorama'); canvas.focus(); };
+// In the diorama, a mouse points at the ground and your kid squirts that way.
+function cursorYaw() {
+  if (input.nx === undefined) return player.face;
+  tmp.set(input.nx, input.ny, 0.5).unproject(camera).sub(camera.position);
+  if (tmp.y > -0.01) return player.face;
+  const t = (player.pos.y + 0.9 - camera.position.y) / tmp.y;
+  return Math.atan2(-(camera.position.x + tmp.x * t - player.pos.x), -(camera.position.z + tmp.z * t - player.pos.z));
+}
 $('prompt').onclick = () => interaction()?.fn();
 
 if (TOUCH) {
@@ -1038,13 +1082,18 @@ let aimDist = 20, flip = false;
 const yawDiff = (dx, dz) => { const d = Math.atan2(-dx, -dz) - player.yaw; return Math.atan2(Math.sin(d), Math.cos(d)); };
 // The kid you are roughly facing. On a phone this cone is wide and the squirter fires at them by itself.
 function findLock() {
-  const p = player.pos, cone = TOUCH ? 1.0 : 0.14; let best = null, ba = cone;
+  const p = player.pos, dio = game.cam === 'diorama';
+  // Shoulder view: a cone around the crosshair. Diorama: you can see everyone, so on a phone it is
+  // simply the nearest kid, leaning toward the way you face; with a mouse, whoever the pointer is on.
+  const ref = dio ? (TOUCH ? player.face : cursorYaw()) : player.yaw, nearest = dio && TOUCH;
+  let best = null, ba = nearest ? 1e9 : dio ? 0.5 : TOUCH ? 1.0 : 0.14;
   for (const a of game.actors) {
     if (a.team <= 0 || a.isDecoy || !a.targetable()) continue;
     const dx = a.pos.x - p.x, dz = a.pos.z - p.z, d = Math.hypot(dx, dz);
-    if (d > 15 || d < 0.3) continue;
-    const ang = Math.abs(yawDiff(dx, dz)) + d * 0.01 - (a === game.lock ? 0.35 : 0); // stick with whoever you're already on
-    if (ang < ba && world.los(p.x, p.y + 1.2, p.z, a.pos.x, a.pos.y + 0.8, a.pos.z)) { ba = ang; best = a; }
+    if (d > (dio ? 12 : 15) || d < 0.3) continue;
+    const off = Math.atan2(-dx, -dz) - ref, rel = Math.abs(Math.atan2(Math.sin(off), Math.cos(off)));
+    const score = (nearest ? d * 0.12 + rel * 0.3 : rel + d * 0.01) - (a === game.lock ? 0.35 : 0); // stick with whoever you're already on
+    if (score < ba && world.los(p.x, p.y + 1.2, p.z, a.pos.x, a.pos.y + 0.8, a.pos.z)) { ba = score; best = a; }
   }
   return best;
 }
@@ -1053,7 +1102,7 @@ function aim() {
   const p = player.pos, sy = Math.sin(player.face), cy = Math.cos(player.face);
   let tx, ty, tz; const lk = game.lock;
   if (lk) { tx = lk.pos.x; ty = lk.pos.y + lk.h * 0.6; tz = lk.pos.z; }
-  else if (TOUCH) {
+  else if (TOUCH || game.cam === 'diorama') {
     // No crosshair on a phone: you squirt the way your kid is facing. A wall straight ahead gets opened
     // at walking height, one cell at your feet and one above.
     flip = !flip; tmp.set(p.x, p.y + (flip ? 0.5 : 1.5), p.z); back.set(-sy, 0, -cy);
@@ -1127,11 +1176,11 @@ function updatePlayer(dt) {
   const moving = Math.hypot(f, s) > 0.1, firing = player.hasGun && (input.fire || k.has('KeyF'));
   const lk = game.lock;
   if (firing && lk) turn(Math.atan2(-(lk.pos.x - p.x), -(lk.pos.z - p.z)), 18);      // squirting: face whoever you're aimed at
-  else if (firing && !TOUCH) turn(player.yaw, 18);                                    // or, with a mouse, wherever the crosshair is
+  else if (firing && !TOUCH) turn(game.cam === 'diorama' ? cursorYaw() : player.yaw, 18);                                    // or, with a mouse, wherever the crosshair is
   else if (moving) turn(Math.atan2(-wx, -wz), 12);                                    // otherwise face the way you're running
   // Nobody steering the camera? Let it swing round behind you. Running straight at it leaves it alone.
   const handsOff = TOUCH ? !input.looking && game.time - input.lookAt > 0.6 : document.pointerLockElement !== canvas && game.time - input.lookAt > 1.2;
-  if (handsOff && game.mode !== 'menu') {
+  if (handsOff && game.mode !== 'menu' && game.cam !== 'diorama') {
     const d = Math.atan2(Math.sin(player.face - player.yaw), Math.cos(player.face - player.yaw));
     if (moving) player.yaw += Math.sin(d) * Math.min(1, Math.hypot(f, s)) * 1.05 * dt; // gentle: holding sideways is a wide arc, not a spin
     if (firing && lk) player.yaw += d * Math.min(1, dt * 2.5);
@@ -1239,7 +1288,9 @@ function step(dt) {
     const f = l.flicker ? (Math.sin(game.time * 23 + l.seed) > 0.2 || Math.sin(game.time * 3.1 + l.seed) > 0.6 ? 1 : 0.15) : 0.9 + 0.1 * Math.sin(game.time * 2 + l.seed);
     l.sm.opacity = f; l.pm.opacity = 0.55 * f;
   }
-  towerMesh.visible = skyline.visible = game.mode !== 'intro';
+  // From above, the towers would be a lid on the model, so the diorama takes them off.
+  towerMesh.visible = skyline.visible = game.mode === 'menu' || (game.mode !== 'intro' && game.cam !== 'diorama');
+  if (game.mode === 'menu') CUT.r.value = 0;
   if (game.mode === 'menu') avatar.visible = false; // the backyard is an ordinary backyard until you crawl in
   fx.update(dt);
   aimSun(game.mode === 'menu' ? PLACES.tree : camera.position);
@@ -1253,6 +1304,8 @@ function frame(now) {
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
+try { const c = localStorage.getItem('cc-cam'); if (c === 'shoulder' || c === 'diorama') game.cam = c; } catch { /* default view */ }
+if (location.hash === '#shoulder' || location.hash === '#diorama') game.cam = location.hash.slice(1);
 setEnv('city'); showHud();
 requestAnimationFrame(frame);
-window.__cc = { game, player, world, step, input, PLACES, LEVEL, enterCity, startIntro };
+window.__cc = { game, player, world, step, input, PLACES, LEVEL, enterCity, startIntro, setCam };

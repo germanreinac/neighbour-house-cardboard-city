@@ -28,6 +28,17 @@ Barricades are taped across the route so you have to spend some. Pools refill yo
 checkpoints. A vending box by each pool trades bottle caps for upgrades. Ten of Milo's notes are
 scattered along the way.
 
+## Two cameras
+
+Press C, or tap the view button, to switch. The choice is remembered.
+
+- **Diorama (default).** A fixed camera looks down into the city like a tabletop model and follows
+  you; there is nothing to steer. It turns once per district so the road ahead runs up the screen.
+  Everything more than about four boxes above your feet is sliced away, and whatever is between
+  the camera and your kid is cut open, so you can see into alleys and rooms. The towers overhead
+  are hidden in this view. On a phone, squirt aims at the nearest kid; with a mouse, at the pointer.
+- **Over the shoulder.** The earlier third-person view, with the towers looming over you.
+
 ## Heights and doors
 
 Everything here is cardboard and melts like any other wall.
