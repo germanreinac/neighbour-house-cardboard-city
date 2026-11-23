@@ -28,16 +28,14 @@ Barricades are taped across the route so you have to spend some. Pools refill yo
 checkpoints. A vending box by each pool trades bottle caps for upgrades. Ten of Milo's notes are
 scattered along the way.
 
-## Two cameras
+## Camera and controls
 
-Press C, or tap the view button, to switch. The choice is remembered.
+Made for keyboard and mouse. The camera sits over your shoulder and the mouse steers it freely.
+Your kid runs the way you push relative to the camera and turns to face it; while you squirt, they
+turn to face the crosshair and the camera leans in. The wheel zooms. Shift runs.
 
-- **Diorama (default).** A fixed camera looks down into the city like a tabletop model and follows
-  you; there is nothing to steer. It turns once per district so the road ahead runs up the screen.
-  Everything more than about four boxes above your feet is sliced away, and whatever is between
-  the camera and your kid is cut open, so you can see into alleys and rooms. The towers overhead
-  are hidden in this view. On a phone, squirt aims at the nearest kid; with a mouse, at the pointer.
-- **Over the shoulder.** The earlier third-person view, with the towers looming over you.
+A fixed top-down "diorama" camera was tried and removed: it made the city read as a maze of open
+boxes and lost the feeling of the towers looming over you.
 
 ## Heights and doors
 
@@ -52,14 +50,10 @@ Everything here is cardboard and melts like any other wall.
 - **Doors** are flaps on a tape hinge. Walk into one and it swings away from you, then falls shut
   behind you. Closed doors block sight, so kids on the other side can't see you. Kids open them too.
 
-## Controls on a phone
+## Touch
 
-Push the left stick the way you want to run. Your kid turns to face that way and the camera drifts
-in behind on its own. Hold the squirt button: if a kid is in the lock-on ring you turn and aim at
-them, otherwise you squirt straight ahead, and a wall in front of you is opened at walking height.
-Nothing fires by itself. Dragging with the right thumb to look around is optional.
-
-With a mouse the camera is yours: the crosshair aims, and your kid turns to face it while squirting.
+Touch controls still work (left stick to run, the camera follows, hold squirt for lock-on and a
+door assist), but the game is not designed around them.
 
 ## Still in the code, switched off
 
@@ -80,8 +74,8 @@ Then open http://localhost:8000.
 
 | | |
 |---|---|
-| WASD | walk (you hop up one-box steps automatically), Space jumps |
-| Mouse | look, hold left click to squirt |
+| WASD | walk (you hop up one-box steps automatically), Shift runs, Space jumps |
+| Mouse | look, hold left click to squirt, wheel zooms |
 | Right click / Q | place a box |
 | G | throw a water balloon |
 | X | stand up a cardboard cut-out of yourself |
